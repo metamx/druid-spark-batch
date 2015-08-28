@@ -86,15 +86,7 @@ object SparkDruidIndexer
           val row = it.map(parser.parse)
           row
             .map(r => mapParser.parse(r).asInstanceOf[MapBasedInputRow])
-            .map(
-              r => new SerializedMapBasedInputRow(
-                new MapBasedInputRow(
-                  passableGran.getDelegate.truncate(r.getTimestampFromEpoch),
-                  r.getDimensions,
-                  r.getEvent
-                )
-              )
-            )
+            .map(r => new SerializedMapBasedInputRow(r))
         }
       )
       .filter(r => ingestInterval.contains(r.getDelegate.getTimestamp))
@@ -105,7 +97,7 @@ object SparkDruidIndexer
     val data_dims = raw_data
       .map(
         r => {
-          r.getDelegate.getTimestampFromEpoch -> r.getDimensionValues
+          passableGran.getDelegate.truncate(r.getDelegate.getTimestampFromEpoch) -> r.getDimensionValues
         }
       )
     log.info("Starting uniqes")
@@ -152,7 +144,7 @@ object SparkDruidIndexer
                       new OnheapIncrementalIndex(
                         new IncrementalIndexSchema.Builder()
                           .withDimensionsSpec(parseSpec.getDelegate.getDimensionsSpec)
-                          .withQueryGranularity(QueryGranularity.ALL)
+                          .withQueryGranularity(passableGran.getDelegate)
                           .withMetrics(aggs.map(_.getDelegate))
                           .build()
                         , rowsPerPersist
