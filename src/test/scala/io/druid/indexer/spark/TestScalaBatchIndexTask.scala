@@ -33,7 +33,7 @@ import scala.collection.JavaConversions._
 class TestScalaBatchIndexTask extends FlatSpec with Matchers
 {
   val objectMapper           = new DefaultObjectMapper()
-    .registerModule(new SimpleModule("TestScalaBatchIndexTask").registerSubtypes(ScalaBatchIndexTask.getClass))
+    .registerModule(new SimpleModule("TestScalaBatchIndexTask").registerSubtypes(SparkBatchIndexTask.getClass))
   val taskId                 = "taskId"
   val dataSource             = "defaultDataSource"
   val interval               = Interval.parse("2010/2020")
@@ -117,7 +117,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
 
   "The ScalaBatchIndexTask" should "properly SerDe a full object" in {
 
-    val taskPre = new ScalaBatchIndexTask(
+    val taskPre = new SparkBatchIndexTask(
       taskId,
       dataSource,
       interval,
@@ -130,12 +130,12 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
       properties,
       master
     )
-    val taskPost = objectMapper.readValue(objectMapper.writeValueAsString(taskPre), classOf[ScalaBatchIndexTask])
+    val taskPost = objectMapper.readValue(objectMapper.writeValueAsString(taskPre), classOf[SparkBatchIndexTask])
     assert(taskPre.equals(taskPost))
   }
 
   "The ScalaBatchIndexTask" should "be equal for equal tasks" in {
-    val task1 = new ScalaBatchIndexTask(
+    val task1 = new SparkBatchIndexTask(
       taskId,
       dataSource,
       interval,
@@ -148,7 +148,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
       properties,
       master
     )
-    val task2 = new ScalaBatchIndexTask(
+    val task2 = new SparkBatchIndexTask(
       taskId,
       dataSource,
       interval,
@@ -166,7 +166,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
   }
 
   "The ScalaBatchIndexTask" should "not be equal for dissimilar tasks" in {
-    val task1 = new ScalaBatchIndexTask(
+    val task1 = new SparkBatchIndexTask(
       taskId,
       dataSource,
       interval,
@@ -181,7 +181,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
     )
     assert(
       task1.equals(
-        new ScalaBatchIndexTask(
+        new SparkBatchIndexTask(
           taskId,
           dataSource,
           interval,
@@ -198,7 +198,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
     )
     assert(
       !task1.equals(
-        new ScalaBatchIndexTask(
+        new SparkBatchIndexTask(
           taskId + "something else",
           dataSource,
           interval,
@@ -216,7 +216,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
 
     assert(
       !task1.equals(
-        new ScalaBatchIndexTask(
+        new SparkBatchIndexTask(
           taskId,
           dataSource + "something else",
           interval,
@@ -234,7 +234,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
 
     assert(
       !task1.equals(
-        new ScalaBatchIndexTask(
+        new SparkBatchIndexTask(
           taskId,
           dataSource,
           interval,
@@ -252,7 +252,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
 
     assert(
       !task1.equals(
-        new ScalaBatchIndexTask(
+        new SparkBatchIndexTask(
           taskId,
           dataSource,
           interval,
@@ -271,7 +271,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
 
     assert(
       !task1.equals(
-        new ScalaBatchIndexTask(
+        new SparkBatchIndexTask(
           taskId,
           dataSource,
           interval,
@@ -290,7 +290,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
 
     assert(
       !task1.equals(
-        new ScalaBatchIndexTask(
+        new SparkBatchIndexTask(
           taskId,
           dataSource,
           interval,
@@ -308,7 +308,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
 
     assert(
       !task1.equals(
-        new ScalaBatchIndexTask(
+        new SparkBatchIndexTask(
           taskId,
           dataSource,
           interval,
@@ -328,7 +328,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
     notSameProperties.setProperty("Something not present", "some value")
     assert(
       !task1.equals(
-        new ScalaBatchIndexTask(
+        new SparkBatchIndexTask(
           taskId,
           dataSource,
           interval,

@@ -22,17 +22,18 @@ package io.druid.indexer.spark
 import java.util
 
 import com.fasterxml.jackson.databind.Module
+import com.fasterxml.jackson.databind.jsontype.NamedType
 import com.fasterxml.jackson.databind.module.SimpleModule
 import com.google.inject.Binder
 import io.druid.initialization.DruidModule
 
 import scala.collection.JavaConversions._
 
-class ScalaDruidIndexerModule extends DruidModule
+class SparkDruidIndexerModule extends DruidModule
 {
   override def getJacksonModules: util.List[_ <: Module] = List(
-    new SimpleModule("ScalaDruidIndexer")
-      .registerSubtypes(classOf[ScalaBatchIndexTask])
+    new SimpleModule("SparkDruidIndexer")
+      .registerSubtypes(new NamedType(classOf[SparkBatchIndexTask], SparkBatchIndexTask.TASK_TYPE))
   )
 
   override def configure(binder: Binder): Unit = {

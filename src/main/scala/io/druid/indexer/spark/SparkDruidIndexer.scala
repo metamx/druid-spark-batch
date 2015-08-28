@@ -27,19 +27,19 @@ import com.fasterxml.jackson.core.JsonParser
 import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.common.io.Closer
-import com.google.inject.name.Names
 import com.google.inject.{Binder, Key, Module}
 import com.metamx.common.logger.Logger
 import io.druid.data.input.impl._
 import io.druid.granularity.QueryGranularity
-import io.druid.guice.GuiceInjectors
-import io.druid.guice.annotations.Smile
+import io.druid.guice.annotations.{Self, Smile}
+import io.druid.guice.{GuiceInjectors, JsonConfigProvider}
 import io.druid.indexer.JobHelper
 import io.druid.initialization.Initialization
 import io.druid.query.aggregation.AggregatorFactory
 import io.druid.segment._
 import io.druid.segment.incremental.{IncrementalIndexSchema, OnheapIncrementalIndex}
 import io.druid.segment.loading.DataSegmentPusher
+import io.druid.server.DruidNode
 import io.druid.timeline.DataSegment
 import io.druid.timeline.partition.NumberedShardSpec
 import org.apache.commons.io.FileUtils
@@ -236,8 +236,12 @@ object SerializedJsonStatic
       new Module
       {
         override def configure(binder: Binder): Unit = {
-          binder.bindConstant.annotatedWith(Names.named("serviceName")).to("druid/spark")
-          binder.bindConstant.annotatedWith(Names.named("servicePort")).to(0)
+          JsonConfigProvider
+            .bindInstance(
+              binder,
+              Key.get(classOf[DruidNode], classOf[Self]),
+              new DruidNode("spark-indexer", null, null)
+            )
         }
       }
     )
@@ -279,8 +283,14 @@ class SerializedJson[A](inputDelegate: A) extends Serializable
       .mapper
       .readValue(in, new TypeReference[java.util.Map[String, Object]] {})
       .asInstanceOf[java.util.Map[String, Object]].toMap
-    val clazzName = m.get("class") match {
-      case Some(cn) => getClass.getClassLoader.loadClass(cn.toString)
+    val clazzName: Class[_] = m.get("class") match {
+      case Some(cn) => if (Thread.currentThread().getContextClassLoader == null) {
+        SerializedJsonStatic.log.debug("Using class's classloader [%s]", getClass.getClassLoader)
+        getClass.getClassLoader.loadClass(cn.toString)
+      } else {
+        SerializedJsonStatic.log.debug("Using context classloader [%s]", Thread.currentThread().getContextClassLoader)
+        Thread.currentThread().getContextClassLoader.loadClass(cn.toString)
+      }
       case _ => throw new NullPointerException("Missing `class`")
     }
     delegate = m.get("delegate") match {
