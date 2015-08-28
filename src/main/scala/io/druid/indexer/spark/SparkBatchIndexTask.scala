@@ -143,14 +143,15 @@ class SparkBatchIndexTask(
     Preconditions.checkNotNull(queryGranularity, "%s", "queryGranularity")
     log.debug("Sending task `%s`", SerializedJsonStatic.mapper.writeValueAsString(this))
 
-    val conf = asScalaSet(properties_.entrySet()).foldLeft(
-      new SparkConf()
-        .setAppName(getId)
-        .setMaster(master_)
-        .set("spark.executor.memory","8G")
-        .set("spark.executor.cores", "1")
-    )((m, e) => m.set(e.getKey.toString, e.getValue.toString))
+
+    val conf = new SparkConf()
+      .setAppName(getId)
+      .setMaster(master_)
+      .set("spark.executor.memory","6G")
+      .set("spark.executor.cores", "1")
+      .setAll(properties_)
     val sc = new SparkContext(conf)
+
     val injector: Injector = GuiceInjectors.makeStartupInjector
     val extensionsConfig: ExtensionsConfig = injector.getInstance(classOf[ExtensionsConfig])
     val aetherClient: DefaultTeslaAether = Initialization.getAetherClient(extensionsConfig)

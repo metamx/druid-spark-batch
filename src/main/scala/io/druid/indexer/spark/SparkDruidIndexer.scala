@@ -49,6 +49,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapreduce.TaskAttemptID
 import org.apache.hadoop.util.Progressable
 import org.apache.spark.SparkContext
+import org.apache.spark.storage.StorageLevel
 import org.joda.time.{DateTime, Interval}
 
 import scala.collection.JavaConversions._
@@ -90,7 +91,7 @@ object SparkDruidIndexer
         }
       )
       .filter(r => ingestInterval.contains(r.getDelegate.getTimestamp))
-      .cache()
+      .persist(StorageLevel.MEMORY_AND_DISK_SER)
     // Get dimension values and dims per timestamp
 
     log.info("Defining uniques mapping")
@@ -169,7 +170,8 @@ object SparkDruidIndexer
               ),
               aggs.map(_.getDelegate),
               tmpMergeDir,
-              new IndexSpec()
+              new IndexSpec(),
+              new LoggingProgressIndicator("index-merge")
             )
             val dataSegment = JobHelper.serializeOutIndex(
               new DataSegment(
@@ -320,9 +322,9 @@ class SerializedMapBasedInputRow(inputDelegate: MapBasedInputRow) extends Serial
   private def writeObject(out: ObjectOutputStream) = {
     val m = mapAsJavaMap(
       Map(
-        "timestamp" -> inputDelegate.getTimestampFromEpoch,
-        "dimensions" -> inputDelegate.getDimensions,
-        "event" -> inputDelegate.getEvent
+        "timestamp" -> getDelegate.getTimestampFromEpoch,
+        "dimensions" -> getDelegate.getDimensions,
+        "event" -> getDelegate.getEvent
       )
     )
     if (SerializedJsonStatic.log.isDebugEnabled) {
@@ -352,7 +354,7 @@ class SerializedMapBasedInputRow(inputDelegate: MapBasedInputRow) extends Serial
     }
     delegate = new MapBasedInputRow(timestamp, dimensions, event)
     if (SerializedJsonStatic.log.isDebugEnabled) {
-      SerializedJsonStatic.log.debug("Read in %s", delegate.toString)
+      SerializedJsonStatic.log.debug("Read in %s", delegate)
     }
   }
 
