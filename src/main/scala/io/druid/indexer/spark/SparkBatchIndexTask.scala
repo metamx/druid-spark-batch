@@ -19,6 +19,7 @@
 
 package io.druid.indexer.spark
 
+import java.io.File
 import java.net.{URL, URLClassLoader}
 import java.util
 import java.util.{Objects, Properties}
@@ -29,6 +30,7 @@ import com.google.common.collect.Iterables
 import com.google.inject.Injector
 import com.metamx.common.logger.Logger
 import io.druid.data.input.impl.ParseSpec
+import io.druid.granularity.QueryGranularity
 import io.druid.guice.{ExtensionsConfig, GuiceInjectors}
 import io.druid.indexing.common.actions.{LockTryAcquireAction, TaskActionClient}
 import io.druid.indexing.common.task.AbstractTask
@@ -49,8 +51,8 @@ class SparkBatchIndexTask(
   dataSource: String,
   @JsonProperty("interval")
   interval: Interval,
-  @JsonProperty("dataFile")
-  dataFile: String,
+  @JsonProperty("dataFiles")
+  dataFiles: util.List[String],
   @JsonProperty("parseSpec")
   parseSpec: ParseSpec,
   @JsonProperty("outputPath")
@@ -77,7 +79,9 @@ class SparkBatchIndexTask(
       }
     ),
   @JsonProperty("master")
-  master: String = "local[1]"
+  master: String = "local[1]",
+  @JsonProperty("queryGranularity")
+  queryGranularity: QueryGranularity
   ) extends AbstractTask(
   if (id == null) {
     AbstractTask
@@ -130,17 +134,21 @@ class SparkBatchIndexTask(
   override def getType: String = SparkBatchIndexTask.TASK_TYPE
 
   override def run(toolbox: TaskToolbox): TaskStatus = {
-    Preconditions.checkNotNull(Strings.emptyToNull(dataFile), "%s", "dataFile")
+    Preconditions.checkNotNull(dataFiles, "%s", "dataFiles")
+    Preconditions.checkArgument(!dataFiles.isEmpty, "%s", "empty dataFiles")
     Preconditions.checkNotNull(Strings.emptyToNull(dataSource), "%s", "dataSource")
     Preconditions.checkNotNull(parseSpec, "%s", "parseSpec")
     Preconditions.checkNotNull(interval, "%s", "interval")
     Preconditions.checkNotNull(Strings.emptyToNull(outPathString), "%s", "outputPath")
+    Preconditions.checkNotNull(queryGranularity, "%s", "queryGranularity")
     log.debug("Sending task `%s`", SerializedJsonStatic.mapper.writeValueAsString(this))
 
     val conf = asScalaSet(properties_.entrySet()).foldLeft(
       new SparkConf()
         .setAppName(getId)
         .setMaster(master_)
+        .set("spark.executor.memory","8G")
+        .set("spark.executor.cores", "1")
     )((m, e) => m.set(e.getKey.toString, e.getValue.toString))
     val sc = new SparkContext(conf)
     val injector: Injector = GuiceInjectors.makeStartupInjector
@@ -154,8 +162,18 @@ class SparkBatchIndexTask(
         coordinateLoader.asInstanceOf[URLClassLoader].getURLs
       }
     ).foldLeft(List[URL]())(_ ++ List(_)).map(_.toString)
-    log.info("Adding `%s` to spark context", util.Arrays.deepToString(extensionJars.toArray))
+
+    var classpathProperty: String = System.getProperty("druid.hadoop.internal.classpath")
+    if (classpathProperty == null) {
+      classpathProperty = System.getProperty("java.class.path")
+    }
+
+    classpathProperty.split(File.pathSeparator).foreach(sc.addJar)
+
+    SparkContext.jarOfClass(getClass).foreach(sc.addJar)
     extensionJars.foreach(sc.addJar)
+
+    log.info("Adding `%s` to spark context", util.Arrays.deepToString(sc.jars.toArray))
 
     val myLock: TaskLock = Iterables.getOnlyElement(getTaskLocks(toolbox))
     val version = myLock.getVersion
@@ -164,7 +182,7 @@ class SparkBatchIndexTask(
     var status = TaskStatus.failure(getId)
     try {
       val dataSegments = SparkDruidIndexer.loadData(
-        dataFile,
+        dataFiles,
         dataSource,
         new SerializedJson[ParseSpec](parseSpec),
         interval,
@@ -172,6 +190,7 @@ class SparkBatchIndexTask(
         rowsPerPartition_,
         rowsPerPersist_,
         outPathString,
+        getQueryGranularity,
         sc
       ).map(_.withVersion(version))
       log.info("Found segments `%s`", util.Arrays.deepToString(dataSegments.toArray))
@@ -239,7 +258,8 @@ class SparkBatchIndexTask(
           .getTimestampSpec
           .getTimestampFormat,
         other.getParseSpec.getTimestampSpec.getTimestampFormat
-      )
+      ) &&
+      Objects.equals(getQueryGranularity, other.getQueryGranularity)
   }
 
   @throws(classOf[Exception])
@@ -256,8 +276,8 @@ class SparkBatchIndexTask(
   @JsonProperty("interval")
   def getTotalInterval = interval
 
-  @JsonProperty("dataFile")
-  def getDataFile = dataFile
+  @JsonProperty("dataFiles")
+  def getDataFile = dataFiles
 
   @JsonProperty("parseSpec")
   def getParseSpec = parseSpec
@@ -279,6 +299,9 @@ class SparkBatchIndexTask(
 
   @JsonProperty("master")
   def getMaster = master_
+
+  @JsonProperty("queryGranularity")
+  def getQueryGranularity = queryGranularity
 }
 
 object SparkBatchIndexTask

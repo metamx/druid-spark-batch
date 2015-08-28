@@ -29,6 +29,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.common.io.Closer
 import com.google.inject.{Binder, Key, Module}
 import com.metamx.common.logger.Logger
+import io.druid.data.input.MapBasedInputRow
 import io.druid.data.input.impl._
 import io.druid.granularity.QueryGranularity
 import io.druid.guice.annotations.{Self, Smile}
@@ -57,7 +58,7 @@ object SparkDruidIndexer
   val log = new Logger(SparkDruidIndexer.getClass)
 
   def loadData(
-    data_file: String,
+    data_file: Seq[String],
     dataSource: String,
     parseSpec: SerializedJson[ParseSpec],
     ingestInterval: Interval,
@@ -65,6 +66,7 @@ object SparkDruidIndexer
     rowsPerPartition: Long,
     rowsPerPersist: Int,
     outPathString: String,
+    queryGran: QueryGranularity,
     sc: SparkContext
     ): Seq[DataSegment] =
   {
@@ -73,54 +75,46 @@ object SparkDruidIndexer
     val aggs: Array[SerializedJson[AggregatorFactory]] = aggregatorFactories
       .map(x => new SerializedJson[AggregatorFactory](x))
       .toArray
-    log.info("Starting caching of raw data")
+    log.info("Starting caching of raw data for [%s] over interval [%s]", dataSource, ingestInterval)
+    val passableGran = new SerializedJson[QueryGranularity](queryGran)
     val raw_data = sc
-      .textFile(data_file)
+      .union(data_file.map(sc.textFile(_)))
+      .mapPartitionsWithIndex(
+        (index, it) => {
+          val parser = parseSpec.getDelegate.makeParser()
+          val mapParser = new MapInputRowParser(parseSpec.getDelegate)
+          val row = it.map(parser.parse)
+          row
+            .map(r => mapParser.parse(r).asInstanceOf[MapBasedInputRow])
+            .map(
+              r => new SerializedMapBasedInputRow(
+                new MapBasedInputRow(
+                  passableGran.getDelegate.truncate(r.getTimestampFromEpoch),
+                  r.getDimensions,
+                  r.getEvent
+                )
+              )
+            )
+        }
+      )
+      .filter(r => ingestInterval.contains(r.getDelegate.getTimestamp))
       .cache()
     // Get dimension values and dims per timestamp
 
     log.info("Defining uniques mapping")
     val data_dims = raw_data
-      .mapPartitionsWithIndex(
-        (index, it) => {
-          val parser = parseSpec.getDelegate.makeParser()
-          it.map(parser.parse)
-        }
-      )
-      .mapPartitionsWithIndex(
-        (index, rows) => {
-          val parser = new MapInputRowParser(parseSpec.getDelegate)
-          rows.map(r => new SerializedJson(parser.parse(r)))
-        }
-      )
-      .filter(r => ingestInterval.contains(r.getDelegate.getTimestamp))
       .map(
         r => {
-          QueryGranularity.ALL.truncate(r.getDelegate.getTimestampFromEpoch) ->
-            collectionAsScalaIterable(r.getDelegate.getDimensions)
-              .toSet
-              .map((s: String) => s -> collectionAsScalaIterable(r.getDelegate.getDimension(s)).toSet)
+          r.getDelegate.getTimestampFromEpoch -> r.getDimensionValues
         }
       )
     log.info("Starting uniqes")
     val uniques = data_dims.countApproxDistinct()
-    val numParts = uniques / rowsPerPartition + 1 // 1M rows per partition
+    val numParts = uniques / rowsPerPartition + 1
     log.info("Found %s unique values. Breaking into %s partitions", uniques.toString, numParts.toString)
 
-    val partitioned_data = raw_data.repartition(numParts.toInt)
-      .mapPartitionsWithIndex(
-        (index, it) => {
-          val parser = parseSpec.getDelegate.makeParser()
-          it.map(parser.parse)
-        }
-      )
-      .mapPartitionsWithIndex(
-        (index, rows) => {
-          val parser = new MapInputRowParser(parseSpec.getDelegate)
-          rows.map(r => new SerializedJson(parser.parse(r)))
-        }
-      )
-      .filter(r => ingestInterval.contains(r.getDelegate.getTimestamp))
+    val partitioned_data = raw_data
+      .repartition(numParts.toInt)
       .mapPartitionsWithIndex(
         (index, rows) => {
           val pusher: DataSegmentPusher = SerializedJsonStatic.injector.getInstance(classOf[DataSegmentPusher])
@@ -323,4 +317,61 @@ class SerializedHadoopConfig(delegate: Configuration) extends Serializable
     del = new Configuration()
     del.readFields(in)
   }
+}
+
+@SerialVersionUID(978137489L)
+class SerializedMapBasedInputRow(inputDelegate: MapBasedInputRow) extends Serializable
+{
+  @transient var delegate: MapBasedInputRow = inputDelegate
+
+  @throws[IOException]
+  private def writeObject(out: ObjectOutputStream) = {
+    val m = mapAsJavaMap(
+      Map(
+        "timestamp" -> inputDelegate.getTimestampFromEpoch,
+        "dimensions" -> inputDelegate.getDimensions,
+        "event" -> inputDelegate.getEvent
+      )
+    )
+    if (SerializedJsonStatic.log.isDebugEnabled) {
+      SerializedJsonStatic.log.debug("Writing %s", delegate.toString)
+    }
+    out.write(SerializedJsonStatic.mapper.writeValueAsBytes(m))
+  }
+
+  @throws[IOException]
+  @throws[ClassNotFoundException]
+  private def readObject(in: ObjectInputStream) = {
+    val m: Map[String, Object] = SerializedJsonStatic
+      .mapper
+      .readValue(in, new TypeReference[java.util.Map[String, Object]] {})
+      .asInstanceOf[java.util.Map[String, Object]].toMap
+    val timestamp: Long = m.get("timestamp") match {
+      case Some(l) => l.asInstanceOf[Long]
+      case _ => throw new NullPointerException("Missing `timestamp`")
+    }
+    val dimensions: util.List[String] = m.get("dimensions") match {
+      case Some(d) => d.asInstanceOf[util.List[String]]
+      case _ => throw new NullPointerException("Missing `dimensions`")
+    }
+    val event: util.Map[String, AnyRef] = m.get("event") match {
+      case Some(e) => e.asInstanceOf[util.Map[String, AnyRef]]
+      case _ => throw new NullPointerException("Missing `event`")
+    }
+    delegate = new MapBasedInputRow(timestamp, dimensions, event)
+    if (SerializedJsonStatic.log.isDebugEnabled) {
+      SerializedJsonStatic.log.debug("Read in %s", delegate.toString)
+    }
+  }
+
+  override def hashCode(): Int =
+  {
+    getDimensionValues.hashCode()
+  }
+
+  def getDelegate = delegate
+
+  def getDimensionValues = collectionAsScalaIterable(getDelegate.getDimensions)
+    .toSet
+    .map((s: String) => s -> collectionAsScalaIterable(getDelegate.getDimension(s)).toSet)
 }

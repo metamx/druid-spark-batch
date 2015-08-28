@@ -23,6 +23,7 @@ import java.util.Properties
 
 import com.fasterxml.jackson.databind.module.SimpleModule
 import io.druid.data.input.impl.{DelimitedParseSpec, DimensionsSpec, TimestampSpec}
+import io.druid.granularity.QueryGranularity
 import io.druid.jackson.DefaultObjectMapper
 import io.druid.query.aggregation.{CountAggregatorFactory, DoubleSumAggregatorFactory, LongSumAggregatorFactory}
 import org.joda.time.Interval
@@ -37,7 +38,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
   val taskId                 = "taskId"
   val dataSource             = "defaultDataSource"
   val interval               = Interval.parse("2010/2020")
-  val dataFile               = "file:/someFile"
+  val dataFiles               = Seq("file:/someFile")
   val parseSpec              = new DelimitedParseSpec(
     new TimestampSpec("l_shipdate", "yyyy-MM-dd", null),
     new DimensionsSpec(
@@ -114,6 +115,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
       }
     )
   val master                 = "local[999]"
+  val queryGranularity = QueryGranularity.ALL
 
   "The ScalaBatchIndexTask" should "properly SerDe a full object" in {
 
@@ -121,14 +123,15 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
       taskId,
       dataSource,
       interval,
-      dataFile,
+      dataFiles,
       parseSpec,
       outPath,
       aggFactories,
       rowsPerPartition,
       rowsPerFlush,
       properties,
-      master
+      master,
+      queryGranularity
     )
     val taskPost = objectMapper.readValue(objectMapper.writeValueAsString(taskPre), classOf[SparkBatchIndexTask])
     assert(taskPre.equals(taskPost))
@@ -139,27 +142,29 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
       taskId,
       dataSource,
       interval,
-      dataFile,
+      dataFiles,
       parseSpec,
       outPath,
       aggFactories,
       rowsPerPartition,
       rowsPerFlush,
       properties,
-      master
+      master,
+      queryGranularity
     )
     val task2 = new SparkBatchIndexTask(
       taskId,
       dataSource,
       interval,
-      dataFile,
+      dataFiles,
       parseSpec,
       outPath,
       aggFactories,
       rowsPerPartition,
       rowsPerFlush,
       properties,
-      master
+      master,
+      queryGranularity
     )
     assert(task1.equals(task2))
     assert(task2.equals(task1))
@@ -170,14 +175,15 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
       taskId,
       dataSource,
       interval,
-      dataFile,
+      dataFiles,
       parseSpec,
       outPath,
       aggFactories,
       rowsPerPartition,
       rowsPerFlush,
       properties,
-      master
+      master,
+      queryGranularity
     )
     assert(
       task1.equals(
@@ -185,14 +191,15 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
           taskId,
           dataSource,
           interval,
-          dataFile,
+          dataFiles,
           parseSpec,
           outPath,
           aggFactories,
           rowsPerPartition,
           rowsPerFlush,
           properties,
-          master
+          master,
+          queryGranularity
         )
       )
     )
@@ -202,14 +209,15 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
           taskId + "something else",
           dataSource,
           interval,
-          dataFile,
+          dataFiles,
           parseSpec,
           outPath,
           aggFactories,
           rowsPerPartition,
           rowsPerFlush,
           properties,
-          master
+          master,
+          queryGranularity
         )
       )
     )
@@ -220,14 +228,15 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
           taskId,
           dataSource + "something else",
           interval,
-          dataFile,
+          dataFiles,
           parseSpec,
           outPath,
           aggFactories,
           rowsPerPartition,
           rowsPerFlush,
           properties,
-          master
+          master,
+          queryGranularity
         )
       )
     )
@@ -238,14 +247,15 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
           taskId,
           dataSource,
           interval,
-          dataFile + "something else",
+          dataFiles ++ List("something else"),
           parseSpec,
           outPath,
           aggFactories,
           rowsPerPartition,
           rowsPerFlush,
           properties,
-          master
+          master,
+          queryGranularity
         )
       )
     )
@@ -256,14 +266,15 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
           taskId,
           dataSource,
           interval,
-          dataFile,
+          dataFiles,
           parseSpec,
           outPath,
           aggFactories,
           rowsPerPartition + 1,
           rowsPerFlush,
           properties,
-          master
+          master,
+          queryGranularity
         )
       )
     )
@@ -275,14 +286,15 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
           taskId,
           dataSource,
           interval,
-          dataFile,
+          dataFiles,
           parseSpec,
           outPath,
           aggFactories,
           rowsPerPartition,
           rowsPerFlush + 1,
           properties,
-          master
+          master,
+          queryGranularity
         )
       )
     )
@@ -294,14 +306,15 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
           taskId,
           dataSource,
           interval,
-          dataFile,
+          dataFiles,
           parseSpec,
           outPath,
           aggFactories,
           rowsPerPartition,
           rowsPerFlush,
           properties,
-          master + "something else"
+          master + "something else",
+          queryGranularity
         )
       )
     )
@@ -312,14 +325,15 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
           taskId,
           dataSource,
           interval,
-          dataFile,
+          dataFiles,
           parseSpec,
           outPath,
           aggFactories ++ List(new CountAggregatorFactory("foo")),
           rowsPerPartition,
           rowsPerFlush,
           properties,
-          master
+          master,
+          queryGranularity
         )
       )
     )
@@ -332,14 +346,34 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
           taskId,
           dataSource,
           interval,
-          dataFile,
+          dataFiles,
           parseSpec,
           outPath,
           aggFactories,
           rowsPerPartition,
           rowsPerFlush,
           notSameProperties,
-          master
+          master,
+          queryGranularity
+        )
+      )
+    )
+
+    assert(
+      !task1.equals(
+        new SparkBatchIndexTask(
+          taskId,
+          dataSource,
+          interval,
+          dataFiles,
+          parseSpec,
+          outPath,
+          aggFactories ++ List(new CountAggregatorFactory("foo")),
+          rowsPerPartition,
+          rowsPerFlush,
+          properties,
+          master,
+          QueryGranularity.MINUTE
         )
       )
     )

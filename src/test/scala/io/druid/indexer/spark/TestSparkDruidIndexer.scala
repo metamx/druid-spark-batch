@@ -21,9 +21,12 @@ package io.druid.indexer.spark
 
 import java.io.Closeable
 import java.nio.file.Files
+import java.util
 
 import com.google.common.io.Closer
+import com.metamx.common.logger.Logger
 import io.druid.data.input.impl.{DelimitedParseSpec, DimensionsSpec, ParseSpec, TimestampSpec}
+import io.druid.granularity.QueryGranularity
 import io.druid.query.aggregation.{CountAggregatorFactory, DoubleSumAggregatorFactory, LongSumAggregatorFactory}
 import org.apache.commons.io.FileUtils
 import org.apache.spark.{SparkConf, SparkContext}
@@ -52,7 +55,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         .set("user.timezone", "UTC")
         .set("file.encoding", "UTF-8")
         .set("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager")
-        .set("org.jboss.logging.provider", "log4j2")
+        .set("org.jboss.logging.provider", "slf4j")
         .set("druid.processing.columnCache.sizeBytes", "1000000000")
       val dataSource = "dataSource"
 
@@ -125,7 +128,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         }
       )
       val loadResults = SparkDruidIndexer.loadData(
-        data_file,
+        Seq(data_file),
         dataSource,
         parseSpec,
         Interval.parse("1990/2000"),
@@ -133,6 +136,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         500L,
         80000,
         outDir.toString,
+        QueryGranularity.DAY,
         sc
       )
       assert(loadResults.length == 3)
@@ -144,4 +148,9 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
       closer.close()
     }
   }
+}
+
+object StaticTestSparkDruidIndexer
+{
+  val log = new Logger(classOf[TestSparkDruidIndexer])
 }
