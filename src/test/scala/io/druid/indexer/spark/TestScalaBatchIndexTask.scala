@@ -21,9 +21,11 @@ package io.druid.indexer.spark
 
 import java.util.Properties
 
+import com.fasterxml.jackson.databind.jsontype.NamedType
 import com.fasterxml.jackson.databind.module.SimpleModule
 import io.druid.data.input.impl.{DelimitedParseSpec, DimensionsSpec, TimestampSpec}
 import io.druid.granularity.QueryGranularity
+import io.druid.indexing.common.task.Task
 import io.druid.jackson.DefaultObjectMapper
 import io.druid.query.aggregation.{CountAggregatorFactory, DoubleSumAggregatorFactory, LongSumAggregatorFactory}
 import org.joda.time.Interval
@@ -34,11 +36,14 @@ import scala.collection.JavaConversions._
 class TestScalaBatchIndexTask extends FlatSpec with Matchers
 {
   val objectMapper           = new DefaultObjectMapper()
-    .registerModule(new SimpleModule("TestScalaBatchIndexTask").registerSubtypes(SparkBatchIndexTask.getClass))
+    .registerModule(
+    new SimpleModule("TestScalaBatchIndexTask")
+      .registerSubtypes(new NamedType(classOf[SparkBatchIndexTask], SparkBatchIndexTask.TASK_TYPE))
+  )
   val taskId                 = "taskId"
   val dataSource             = "defaultDataSource"
   val interval               = Interval.parse("2010/2020")
-  val dataFiles               = Seq("file:/someFile")
+  val dataFiles              = Seq("file:/someFile")
   val parseSpec              = new DelimitedParseSpec(
     new TimestampSpec("l_shipdate", "yyyy-MM-dd", null),
     new DimensionsSpec(
@@ -115,7 +120,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
       }
     )
   val master                 = "local[999]"
-  val queryGranularity = QueryGranularity.ALL
+  val queryGranularity       = QueryGranularity.ALL
 
   "The ScalaBatchIndexTask" should "properly SerDe a full object" in {
 
@@ -137,7 +142,14 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
     assert(taskPre.equals(taskPost))
   }
 
-  "The ScalaBatchIndexTask" should "be equal for equal tasks" in {
+  "The SparkBatchIndexTask" should "properly deserialize" in {
+    val str = "{\n\t\"type\":\"index_spark\",\n\t\"dataSource\":\"tpchSpark\",\n\t\"interval\":\"1990-01-01T00:00:00.000Z/2000-01-01T00:00:00.000Z\",\n\t\"dataFiles\":[\"s3n://metamx-user-scratch/charlesallen/tpch/lineitem.tbl\"],\n\t\"outputPath\":\"s3n://metamx-user-scratch/charlesallen/tpch/data\",\n\t\"queryGranularity\":\"DAY\",\n\t\"parseSpec\" : {\n            \"columns\" : [\n              \"l_orderkey\",\n              \"l_partkey\",\n              \"l_suppkey\",\n              \"l_linenumber\",\n              \"l_quantity\",\n              \"l_extendedprice\",\n              \"l_discount\",\n              \"l_tax\",\n              \"l_returnflag\",\n              \"l_linestatus\",\n              \"l_shipdate\",\n              \"l_commitdate\",\n              \"l_receiptdate\",\n              \"l_shipinstruct\",\n              \"l_shipmode\",\n              \"l_comment\"\n            ],\n            \"delimiter\" : \"|\",\n            \"dimensionsSpec\" : {\n              \"dimensionExclusions\" : [\n                  \"l_shipdate\",\n                  \"l_tax\",\n                  \"count\",\n                  \"l_quantity\",\n                  \"l_discount\",\n                  \"l_extendedprice\"\n              ],\n              \"dimensions\" : [\n                  \"l_orderkey\",\n                  \"l_suppkey\",\n                  \"l_linenumber\",\n                  \"l_returnflag\",\n                  \"l_linestatus\",\n                  \"l_commitdate\",\n                  \"l_receiptdate\",\n                  \"l_shipinstruct\",\n                  \"l_shipmode\",\n                  \"l_comment\"\n              ]\n            },\n            \"format\" : \"tsv\",\n            \"timestampSpec\" : {\n              \"column\" : \"l_shipdate\",\n              \"format\" : \"yyyy-MM-dd\"\n            }\n\t},\n\t\"metrics\" : [\n        {\n            \"name\" : \"COUNT\",\n            \"type\" : \"count\"\n        },\n        {\n            \"fieldName\" : \"l_quantity\",\n            \"name\" : \"L_QUANTITY_longSum\",\n            \"type\" : \"longSum\"\n        },\n        {\n            \"fieldName\" : \"l_extendedprice\",\n            \"name\" : \"L_EXTENDEDPRICE_doubleSum\",\n            \"type\" : \"doubleSum\"\n        },\n        {\n            \"fieldName\" : \"l_discount\",\n            \"name\" : \"L_DISCOUNT_doubleSum\",\n            \"type\" : \"doubleSum\"\n        },\n        {\n            \"fieldName\" : \"l_tax\",\n            \"name\" : \"L_TAX_doubleSum\",\n            \"type\" : \"doubleSum\"\n        },\n        {\n            \"fieldName\":\"l_comment\",\n            \"name\" : \"L_COMMENT_HLL\",\n            \"type\" : \"hyperUnique\"\n        },\n        {\n            \"fieldName\":\"l_orderkey\",\n            \"name\" : \"L_ORDERKEY_HLL\",\n            \"type\" : \"hyperUnique\"\n        }\n      ],\n      \"master\":\"spark://spark-master-backfill-0.metamx-prod.com:7077\",\n      \"rowsPerPartition\":1000000\n}"
+    val task = objectMapper.readValue(str, classOf[Task])
+    assert(task.getContext.isEmpty)
+    assertResult(SparkBatchIndexTask.TASK_TYPE)(task.getType)
+  }
+
+  "The SparkBatchIndexTask" should "be equal for equal tasks" in {
     val task1 = new SparkBatchIndexTask(
       taskId,
       dataSource,

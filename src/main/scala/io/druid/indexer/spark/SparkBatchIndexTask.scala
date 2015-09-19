@@ -26,7 +26,7 @@ import java.util.{Objects, Properties}
 
 import com.fasterxml.jackson.annotation.{JsonCreator, JsonProperty}
 import com.google.common.base.{Preconditions, Strings}
-import com.google.common.collect.Iterables
+import com.google.common.collect.{ImmutableMap, Iterables}
 import com.google.inject.Injector
 import com.metamx.common.logger.Logger
 import io.druid.data.input.impl.ParseSpec
@@ -69,7 +69,7 @@ class SparkBatchIndexTask(
     ("user.timezone", "UTC"),
     ("file.encoding", "UTF-8"),
     ("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager"),
-    ("org.jboss.logging.provider", "log4j2"),
+    ("org.jboss.logging.provider", "slf4j"),
     ("druid.processing.columnCache.sizeBytes", "1000000000"),
     ("druid.extensions.searchCurrentClassloader", "true")
   ).foldLeft(new Properties())(
@@ -81,7 +81,9 @@ class SparkBatchIndexTask(
   @JsonProperty("master")
   master: String = "local[1]",
   @JsonProperty("queryGranularity")
-  queryGranularity: QueryGranularity
+  queryGranularity: QueryGranularity,
+  @JsonProperty("context")
+  context: util.Map[String, Object] = Map[String, Object]()
   ) extends AbstractTask(
   if (id == null) {
     AbstractTask
@@ -89,16 +91,23 @@ class SparkBatchIndexTask(
   }
   else {
     id
-  }, dataSource
+  }, dataSource,
+  if (context == null) {
+    ImmutableMap.of()
+  }
+  else {
+    context
+  }
 )
 {
+  private val CHILD_PROPERTY_PREFIX: String = "druid.indexer.fork.property."
   val log                  : Logger                            = new Logger(classOf[SparkBatchIndexTask])
   val properties_          : Properties                        = if (properties == null) {
     Seq(
       ("user.timezone", "UTC"),
       ("file.encoding", "UTF-8"),
       ("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager"),
-      ("org.jboss.logging.provider", "log4j2"),
+      ("org.jboss.logging.provider", "slf4j"),
       ("druid.processing.columnCache.sizeBytes", "1000000000"),
       ("druid.extensions.searchCurrentClassloader", "true")
     ).foldLeft(new Properties())(
@@ -147,10 +156,33 @@ class SparkBatchIndexTask(
     val conf = new SparkConf()
       .setAppName(getId)
       .setMaster(master_)
-      .set("spark.executor.memory","6G")
+      // TODO: better config here
+      .set("spark.executor.memory", "6G")
       .set("spark.executor.cores", "1")
-      .setAll(properties_)
-    val sc = new SparkContext(conf)
+
+    System.getProperties.stringPropertyNames().filter(_.startsWith("io.druid")).foreach(
+      x => {
+        log.debug("Setting io.druid property [%s]", x)
+        conf.set(x, System.getProperty(x))
+      }
+    )
+    System.getProperties.stringPropertyNames().filter(_.startsWith(CHILD_PROPERTY_PREFIX)).foreach(
+      x => {
+        val y = x.substring(CHILD_PROPERTY_PREFIX.length)
+        log.debug("Setting child property [%s]", y)
+        conf.set(y, System.getProperty(x))
+      }
+    )
+
+    val sc = new SparkContext(conf.setAll(properties_))
+
+    System.getProperties.stringPropertyNames().filter(_.startsWith(CHILD_PROPERTY_PREFIX)).foreach(
+      x => {
+        val y = x.substring(CHILD_PROPERTY_PREFIX.length)
+        log.debug("Setting child hadoop property [%s]", y)
+        sc.hadoopConfiguration.set(y, System.getProperty(x), "Druid Forking Property")
+      }
+    )
 
     val injector: Injector = GuiceInjectors.makeStartupInjector
     val extensionsConfig: ExtensionsConfig = injector.getInstance(classOf[ExtensionsConfig])
@@ -169,19 +201,35 @@ class SparkBatchIndexTask(
       classpathProperty = System.getProperty("java.class.path")
     }
 
-    classpathProperty.split(File.pathSeparator).foreach(sc.addJar)
+    classpathProperty.split(File.pathSeparator).foreach(
+      x => {
+        log.info("Adding path jar [%s]", x)
+        sc.addJar(x)
+      }
+    )
 
-    SparkContext.jarOfClass(getClass).foreach(sc.addJar)
-    extensionJars.foreach(sc.addJar)
+    SparkContext.jarOfClass(classOf[SparkBatchIndexTask]).foreach(
+      x => {
+        log.info("Adding class jar [%s]", x)
+        sc.addJar(x)
+      }
+    )
 
-    log.info("Adding `%s` to spark context", util.Arrays.deepToString(sc.jars.toArray))
+    extensionJars.foreach(
+      x => {
+        log.info("Adding extension jar [%s]", x)
+        sc.addJar(x)
+      }
+    )
 
     val myLock: TaskLock = Iterables.getOnlyElement(getTaskLocks(toolbox))
     val version = myLock.getVersion
     log.debug("Using version [%s]", version)
 
     var status = TaskStatus.failure(getId)
+    val priorLoader = Thread.currentThread().getContextClassLoader
     try {
+      Thread.currentThread().setContextClassLoader(classOf[SerializedJson[ParseSpec]].getClassLoader)
       val dataSegments = SparkDruidIndexer.loadData(
         dataFiles,
         dataSource,
@@ -202,6 +250,7 @@ class SparkBatchIndexTask(
       case t: Throwable => SparkBatchIndexTask.log.error(t, "Error in task [%s]", getId)
     }
     finally {
+      Thread.currentThread().setContextClassLoader(priorLoader)
       sc.stop()
     }
     status

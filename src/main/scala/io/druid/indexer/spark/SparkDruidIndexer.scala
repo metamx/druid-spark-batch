@@ -161,7 +161,7 @@ object SparkDruidIndexer
                       new QueryableIndexIndexableAdapter(
                         closer.register(
                           IndexIO.loadIndex(
-                            IndexMerger.persist(incIndex, tmpPersistDir, new IndexSpec())
+                            IndexMerger.persist(incIndex, tmpPersistDir, null, new IndexSpec())
                           )
                         )
                       )
@@ -170,6 +170,7 @@ object SparkDruidIndexer
               ),
               aggs.map(_.getDelegate),
               tmpMergeDir,
+            null,
               new IndexSpec(),
               new LoggingProgressIndicator("index-merge")
             )
