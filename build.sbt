@@ -7,7 +7,7 @@ version := "1.0"
 
 scalaVersion := "2.10.5"
 
-libraryDependencies += "org.apache.spark" %% "spark-core" % "1.4.1"
+libraryDependencies += "org.apache.spark" %% "spark-core" % "1.5.0"
 libraryDependencies += "org.spark-project.akka" %% "akka-actor" % "2.3.4-spark"
 libraryDependencies += "org.apache.hadoop" % "hadoop-client" % "2.4.0"
 libraryDependencies += "org.scalatest" %% "scalatest" % "2.2.4" % "test"
