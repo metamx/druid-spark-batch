@@ -25,7 +25,7 @@ import java.util
 import java.util.{Objects, Properties}
 
 import com.fasterxml.jackson.annotation.{JsonCreator, JsonProperty}
-import com.google.common.base.{Preconditions, Strings}
+import com.google.common.base.{Optional, Preconditions, Strings}
 import com.google.common.collect.{ImmutableMap, Iterables}
 import com.google.inject.Injector
 import com.metamx.common.logger.Logger
@@ -74,11 +74,11 @@ class SparkBatchIndexTask(
     ("druid.processing.columnCache.sizeBytes", "1000000000"),
     ("druid.extensions.searchCurrentClassloader", "true")
   ).foldLeft(new Properties())(
-      (p, e) => {
-        p.setProperty(e._1, e._2)
-        p
-      }
-    ),
+    (p, e) => {
+      p.setProperty(e._1, e._2)
+      p
+    }
+  ),
   @JsonProperty("master")
   master: String = "local[1]",
   @JsonProperty("queryGranularity")
@@ -103,139 +103,153 @@ class SparkBatchIndexTask(
 {
   private val CHILD_PROPERTY_PREFIX: String = "druid.indexer.fork.property."
   val log                  : Logger                            = new Logger(classOf[SparkBatchIndexTask])
-  val properties_          : Properties                        = if (properties == null) {
-    Seq(
-      ("user.timezone", "UTC"),
-      ("file.encoding", "UTF-8"),
-      ("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager"),
-      ("org.jboss.logging.provider", "slf4j"),
-      ("druid.processing.columnCache.sizeBytes", "1000000000"),
-      ("druid.extensions.searchCurrentClassloader", "true")
-    ).foldLeft(new Properties())(
+  val properties_          : Properties                        =
+    if (properties == null) {
+      Seq(
+        ("user.timezone", "UTC"),
+        ("file.encoding", "UTF-8"),
+        ("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager"),
+        ("org.jboss.logging.provider", "slf4j"),
+        ("druid.processing.columnCache.sizeBytes", "1000000000"),
+        ("druid.extensions.searchCurrentClassloader", "true")
+      ).foldLeft(new Properties())(
         (p, e) => {
           p.setProperty(e._1, e._2)
           p
         }
       )
-  } else {
-    properties
-  }
-  val rowsPerPartition_    : Long                              = if (rowsPerPartition == 0) {
-    5000000L
-  } else {
-    rowsPerPartition
-  }
-  val aggregatorFactories_ : java.util.List[AggregatorFactory] = if (aggregatorFactories == null) {
-    List()
-  } else {
-    aggregatorFactories
-  }
-  val rowsPerPersist_      : Int                               = if (rowsPerPersist == 0) {
-    80000
-  } else {
-    rowsPerPersist
-  }
-  val master_              : String                            = if (master == null) {
-    "local[1]"
-  } else {
-    master
-  }
+    } else {
+      properties
+    }
+  val rowsPerPartition_    : Long                              =
+    if (rowsPerPartition == 0) {
+      5000000L
+    } else {
+      rowsPerPartition
+    }
+  val aggregatorFactories_ : java.util.List[AggregatorFactory] =
+    if (aggregatorFactories == null) {
+      List()
+    } else {
+      aggregatorFactories
+    }
+  val rowsPerPersist_      : Int                               =
+    if (rowsPerPersist == 0) {
+      80000
+    } else {
+      rowsPerPersist
+    }
+  val master_              : String                            =
+    if (master == null) {
+      "local[1]"
+    } else {
+      master
+    }
 
   override def getType: String = SparkBatchIndexTask.TASK_TYPE
 
   override def run(toolbox: TaskToolbox): TaskStatus = {
-    Preconditions.checkNotNull(dataFiles, "%s", "dataFiles")
-    Preconditions.checkArgument(!dataFiles.isEmpty, "%s", "empty dataFiles")
-    Preconditions.checkNotNull(Strings.emptyToNull(dataSource), "%s", "dataSource")
-    Preconditions.checkNotNull(parseSpec, "%s", "parseSpec")
-    Preconditions.checkNotNull(interval, "%s", "interval")
-    Preconditions.checkNotNull(Strings.emptyToNull(outPathString), "%s", "outputPath")
-    Preconditions.checkNotNull(queryGranularity, "%s", "queryGranularity")
-    log.debug("Sending task `%s`", SerializedJsonStatic.mapper.writeValueAsString(this))
 
-
-    val conf = new SparkConf()
-      .setAppName(getId)
-      .setMaster(master_)
-      // TODO: better config here
-      .set("spark.executor.memory", "6G")
-      .set("spark.executor.cores", "2")
-      .set("spark.executor.userClassPathFirst", "true")
-      .set("spark.driver.userClassPathFirst", "true")
-      .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-      //.set("spark.kryo.classesToRegister", SparkBatchIndexTask.KRYO_CLASSES.map(_.getCanonicalName).mkString(","))
-    conf.registerKryoClasses(SparkBatchIndexTask.KRYO_CLASSES)
-
-    System.getProperties.stringPropertyNames().filter(_.startsWith("io.druid")).foreach(
-      x => {
-        log.debug("Setting io.druid property [%s]", x)
-        conf.set(x, System.getProperty(x))
-      }
-    )
-    System.getProperties.stringPropertyNames().filter(_.startsWith(CHILD_PROPERTY_PREFIX)).foreach(
-      x => {
-        val y = x.substring(CHILD_PROPERTY_PREFIX.length)
-        log.debug("Setting child property [%s]", y)
-        conf.set(y, System.getProperty(x))
-      }
-    )
-
-    val sc = new SparkContext(conf.setAll(properties_))
-
-    System.getProperties.stringPropertyNames().filter(_.startsWith(CHILD_PROPERTY_PREFIX)).foreach(
-      x => {
-        val y = x.substring(CHILD_PROPERTY_PREFIX.length)
-        log.debug("Setting child hadoop property [%s]", y)
-        sc.hadoopConfiguration.set(y, System.getProperty(x), "Druid Forking Property")
-      }
-    )
-
-    val injector: Injector = GuiceInjectors.makeStartupInjector
-    val extensionsConfig: ExtensionsConfig = injector.getInstance(classOf[ExtensionsConfig])
-    val aetherClient: DefaultTeslaAether = Initialization.getAetherClient(extensionsConfig)
-
-    val extensionJars = extensionsConfig.getCoordinates.flatMap(
-      x => {
-        val coordinateLoader: ClassLoader = Initialization
-          .getClassLoaderForCoordinates(aetherClient, x, extensionsConfig.getDefaultVersion)
-        coordinateLoader.asInstanceOf[URLClassLoader].getURLs
-      }
-    ).foldLeft(List[URL]())(_ ++ List(_)).map(_.toString)
-
-    var classpathProperty: String = System.getProperty("druid.hadoop.internal.classpath")
-    if (classpathProperty == null) {
-      classpathProperty = System.getProperty("java.class.path")
-    }
-
-    classpathProperty.split(File.pathSeparator).foreach(
-      x => {
-        log.info("Adding path jar [%s]", x)
-        sc.addJar(x)
-      }
-    )
-
-    SparkContext.jarOfClass(classOf[SparkBatchIndexTask]).foreach(
-      x => {
-        log.info("Adding class jar [%s]", x)
-        sc.addJar(x)
-      }
-    )
-
-    extensionJars.foreach(
-      x => {
-        log.info("Adding extension jar [%s]", x)
-        sc.addJar(x)
-      }
-    )
-
-    val myLock: TaskLock = Iterables.getOnlyElement(getTaskLocks(toolbox))
-    val version = myLock.getVersion
-    log.debug("Using version [%s]", version)
-
-    var status = TaskStatus.failure(getId)
-    val priorLoader = Thread.currentThread().getContextClassLoader
+    var optionalSC : Option[SparkContext] = Option.empty
+    var status : Option[TaskStatus] = Option.empty
+    val priorLoader = Thread.currentThread.getContextClassLoader
     try {
-      Thread.currentThread().setContextClassLoader(classOf[SerializedJson[ParseSpec]].getClassLoader)
+      Thread.currentThread.setContextClassLoader(classOf[SerializedJson[ParseSpec]].getClassLoader)
+
+      Preconditions.checkNotNull(dataFiles, "%s", "dataFiles")
+      Preconditions.checkArgument(!dataFiles.isEmpty, "%s", "empty dataFiles")
+      Preconditions.checkNotNull(Strings.emptyToNull(dataSource), "%s", "dataSource")
+      Preconditions.checkNotNull(parseSpec, "%s", "parseSpec")
+      Preconditions.checkNotNull(interval, "%s", "interval")
+      Preconditions.checkNotNull(Strings.emptyToNull(outPathString), "%s", "outputPath")
+      Preconditions.checkNotNull(queryGranularity, "%s", "queryGranularity")
+      log.debug("Sending task `%s`", SerializedJsonStatic.mapper.writeValueAsString(this))
+
+
+      val conf = new SparkConf()
+        .setAppName(getId)
+        .setMaster(master_)
+        // TODO: better config here
+        .set("spark.executor.memory", "6G")
+        .set("spark.executor.cores", "2")
+        .set("spark.kryo.referenceTracking", "false")
+        // registerKryoClasses already does the below two lines
+        //.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+        //.set("spark.kryo.classesToRegister", SparkBatchIndexTask.KRYO_CLASSES.map(_.getCanonicalName).mkString(","))
+        .registerKryoClasses(SparkBatchIndexTask.KRYO_CLASSES)
+
+      System.getProperties.stringPropertyNames().filter(_.startsWith("io.druid")).foreach(
+        x => {
+          log.debug("Setting io.druid property [%s]", x)
+          conf.set(x, System.getProperty(x))
+        }
+      )
+      System.getProperties.stringPropertyNames().filter(_.startsWith(CHILD_PROPERTY_PREFIX)).foreach(
+        x => {
+          val y = x.substring(CHILD_PROPERTY_PREFIX.length)
+          log.debug("Setting child property [%s]", y)
+          conf.set(y, System.getProperty(x))
+        }
+      )
+
+      log
+        .debug(
+          "Adding properties: [%s]",
+          properties_.entrySet().map(x => Seq(x.getKey.toString, x.getValue.toString).mkString(":")).mkString(",")
+        )
+      val sc = new SparkContext(conf.setAll(properties_))
+      optionalSC = Option.apply(sc)
+
+      System.getProperties.stringPropertyNames().filter(_.startsWith(CHILD_PROPERTY_PREFIX)).foreach(
+        x => {
+          val y = x.substring(CHILD_PROPERTY_PREFIX.length)
+          log.debug("Setting child hadoop property [%s]", y)
+          sc.hadoopConfiguration.set(y, System.getProperty(x), "Druid Forking Property")
+        }
+      )
+
+      val injector: Injector = GuiceInjectors.makeStartupInjector
+      val extensionsConfig: ExtensionsConfig = injector.getInstance(classOf[ExtensionsConfig])
+      val aetherClient: DefaultTeslaAether = Initialization.getAetherClient(extensionsConfig)
+
+      val extensionJars = extensionsConfig.getCoordinates.flatMap(
+        x => {
+          val coordinateLoader: ClassLoader = Initialization
+            .getClassLoaderForCoordinates(aetherClient, x, extensionsConfig.getDefaultVersion)
+          coordinateLoader.asInstanceOf[URLClassLoader].getURLs
+        }
+      ).foldLeft(List[URL]())(_ ++ List(_)).map(_.toString)
+
+      var classpathProperty: String = System.getProperty("druid.hadoop.internal.classpath")
+      if (classpathProperty == null) {
+        classpathProperty = System.getProperty("java.class.path")
+      }
+
+      classpathProperty.split(File.pathSeparator).foreach(
+        x => {
+          log.info("Adding path jar [%s]", x)
+          sc.addJar(x)
+        }
+      )
+
+      SparkContext.jarOfClass(classOf[SparkBatchIndexTask]).foreach(
+        x => {
+          log.info("Adding class jar [%s]", x)
+          sc.addJar(x)
+        }
+      )
+
+      extensionJars.foreach(
+        x => {
+          log.info("Adding extension jar [%s]", x)
+          sc.addJar(x)
+        }
+      )
+
+      val myLock: TaskLock = Iterables.getOnlyElement(getTaskLocks(toolbox))
+      val version = myLock.getVersion
+      log.debug("Using version [%s]", version)
+
       val dataSegments = SparkDruidIndexer.loadData(
         dataFiles,
         dataSource,
@@ -250,16 +264,22 @@ class SparkBatchIndexTask(
       ).map(_.withVersion(version))
       log.info("Found segments `%s`", util.Arrays.deepToString(dataSegments.toArray))
       toolbox.pushSegments(dataSegments)
-      status = TaskStatus.success(getId)
+      status = Option.apply(TaskStatus.success(getId))
     }
     catch {
       case t: Throwable => SparkBatchIndexTask.log.error(t, "Error in task [%s]", getId)
     }
     finally {
-      Thread.currentThread().setContextClassLoader(priorLoader)
-      sc.stop()
+      Thread.currentThread.setContextClassLoader(priorLoader)
+      optionalSC match {
+        case Some(x) => x.stop()
+        case None => log.info("No spark context.")
+      }
     }
-    status
+    status match {
+      case Some(x) => x
+      case None => TaskStatus.failure(getId)
+    }
   }
 
   override def equals(o: Any): Boolean = {
@@ -362,7 +382,14 @@ class SparkBatchIndexTask(
 
 object SparkBatchIndexTask
 {
-  val KRYO_CLASSES = Array(classOf[SerializedHadoopConfig], classOf[SerializedJson[DataSegment]], classOf[SerializedJson[QueryGranularity]], classOf[SerializedJson[QueryGranularity]], classOf[SerializedJson[AggregatorFactory]], classOf[SerializedJson[ParseSpec]]).asInstanceOf[Array[Class[_]]]
-  val log       = new Logger(SparkBatchIndexTask.getClass)
-  val TASK_TYPE = "index_spark"
+  val KRYO_CLASSES = Array(
+    classOf[SerializedHadoopConfig],
+    classOf[SerializedJson[DataSegment]],
+    classOf[SerializedJson[QueryGranularity]],
+    classOf[SerializedJson[QueryGranularity]],
+    classOf[SerializedJson[AggregatorFactory]],
+    classOf[SerializedJson[ParseSpec]]
+  ).asInstanceOf[Array[Class[_]]]
+  val log          = new Logger(SparkBatchIndexTask.getClass)
+  val TASK_TYPE    = "index_spark"
 }

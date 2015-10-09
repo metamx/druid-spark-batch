@@ -3,11 +3,11 @@ name := "druid-spark-batch"
 
 isSnapshot:=true
 
-version := "0.11-SNAPSHOT"
+version := "0.13-SNAPSHOT"
 
 scalaVersion := "2.10.5"
 
-libraryDependencies += "org.apache.spark" %% "spark-core" % "1.5.0"
+libraryDependencies += "org.apache.spark" %% "spark-core" % "1.5.1"
 libraryDependencies += "org.spark-project.akka" %% "akka-actor" % "2.3.4-spark"
 libraryDependencies += "org.apache.hadoop" % "hadoop-client" % "2.4.0"
 libraryDependencies += "org.scalatest" %% "scalatest" % "2.2.4" % "test"

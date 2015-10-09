@@ -389,6 +389,7 @@ class SerializedHadoopConfig(delegate: Configuration) extends KryoSerializable w
     readObject(new ObjectInputStream(input))
   }
 }
+
 /*
 @SerialVersionUID(978137489L)
 class SerializedMapBasedInputRow(inputDelegate: MapBasedInputRow) extends KryoSerializable with Serializable
