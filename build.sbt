@@ -3,7 +3,7 @@ name := "druid-spark-batch"
 
 isSnapshot:=true
 
-version := "1.0"
+version := "0.11-SNAPSHOT"
 
 scalaVersion := "2.10.5"
 
@@ -19,4 +19,3 @@ libraryDependencies += "com.sun.jersey" % "jersey-servlet" % "1.17.1"
 libraryDependencies += "org.xerial.snappy" % "snappy-java" % "1.1.2-M1"
 
 resolvers += Resolver.mavenLocal
-

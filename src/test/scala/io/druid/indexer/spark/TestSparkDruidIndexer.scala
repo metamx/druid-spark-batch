@@ -57,6 +57,12 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         .set("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager")
         .set("org.jboss.logging.provider", "slf4j")
         .set("druid.processing.columnCache.sizeBytes", "1000000000")
+        .set("spark.driver.host", "localhost")
+        .set("spark.executor.userClassPathFirst", "true")
+        .set("spark.driver.userClassPathFirst", "true")
+        .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+        //.set("spark.kryo.classesToRegister", SparkBatchIndexTask.KRYO_CLASSES.map(_.getCanonicalName).mkString(","))
+      conf.registerKryoClasses(SparkBatchIndexTask.KRYO_CLASSES)
       val dataSource = "dataSource"
 
       val parseSpec = new SerializedJson[ParseSpec](

@@ -37,6 +37,7 @@ import io.druid.indexing.common.task.AbstractTask
 import io.druid.indexing.common.{TaskLock, TaskStatus, TaskToolbox}
 import io.druid.initialization.Initialization
 import io.druid.query.aggregation.AggregatorFactory
+import io.druid.timeline.DataSegment
 import io.tesla.aether.internal.DefaultTeslaAether
 import org.apache.spark.{SparkConf, SparkContext}
 import org.joda.time.Interval
@@ -158,7 +159,12 @@ class SparkBatchIndexTask(
       .setMaster(master_)
       // TODO: better config here
       .set("spark.executor.memory", "6G")
-      .set("spark.executor.cores", "1")
+      .set("spark.executor.cores", "2")
+      .set("spark.executor.userClassPathFirst", "true")
+      .set("spark.driver.userClassPathFirst", "true")
+      .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+      //.set("spark.kryo.classesToRegister", SparkBatchIndexTask.KRYO_CLASSES.map(_.getCanonicalName).mkString(","))
+    conf.registerKryoClasses(SparkBatchIndexTask.KRYO_CLASSES)
 
     System.getProperties.stringPropertyNames().filter(_.startsWith("io.druid")).foreach(
       x => {
@@ -356,6 +362,7 @@ class SparkBatchIndexTask(
 
 object SparkBatchIndexTask
 {
+  val KRYO_CLASSES = Array(classOf[SerializedHadoopConfig], classOf[SerializedJson[DataSegment]], classOf[SerializedJson[QueryGranularity]], classOf[SerializedJson[QueryGranularity]], classOf[SerializedJson[AggregatorFactory]], classOf[SerializedJson[ParseSpec]]).asInstanceOf[Array[Class[_]]]
   val log       = new Logger(SparkBatchIndexTask.getClass)
   val TASK_TYPE = "index_spark"
 }

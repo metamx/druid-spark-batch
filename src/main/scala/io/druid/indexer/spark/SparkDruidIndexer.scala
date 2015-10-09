@@ -19,10 +19,12 @@
 
 package io.druid.indexer.spark
 
-import java.io.{Closeable, IOException, ObjectInputStream, ObjectOutputStream}
+import java.io._
 import java.nio.file.Files
 import java.util
 
+import com.esotericsoftware.kryo.io.{Input, Output}
+import com.esotericsoftware.kryo.{Kryo, KryoSerializable}
 import com.fasterxml.jackson.core.JsonParser
 import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -71,6 +73,7 @@ object SparkDruidIndexer
     sc: SparkContext
     ): Seq[DataSegment] =
   {
+    log.info("Launching Spark task with jar version [%s]", getClass.getPackage.getImplementationVersion)
     val dataSegmentVersion = DateTime.now().toString
     val hadoopConfig = new SerializedHadoopConfig(sc.hadoopConfiguration)
     val aggs: Array[SerializedJson[AggregatorFactory]] = aggregatorFactories
@@ -78,38 +81,44 @@ object SparkDruidIndexer
       .toArray
     log.info("Starting caching of raw data for [%s] over interval [%s]", dataSource, ingestInterval)
     val passableGran = new SerializedJson[QueryGranularity](queryGran)
-    val raw_data = sc
+
+    val baseData = sc
       .union(data_file.map(sc.textFile(_)))
-      .mapPartitionsWithIndex(
-        (index, it) => {
+      .persist(StorageLevel.MEMORY_AND_DISK)
+
+    log.info("Starting uniqes")
+    val uniques = baseData
+      .mapPartitions(
+        (it) => {
           val parser = parseSpec.getDelegate.makeParser()
           val mapParser = new MapInputRowParser(parseSpec.getDelegate)
           val row = it.map(parser.parse)
           row
             .map(r => mapParser.parse(r).asInstanceOf[MapBasedInputRow])
-            .map(r => new SerializedMapBasedInputRow(r))
+            .filter(r => ingestInterval.contains(r.getTimestamp))
+            .map(
+              r => {
+                passableGran.getDelegate.truncate(r.getTimestampFromEpoch) -> getDimValues(r)
+              }
+            )
         }
-      )
-      .filter(r => ingestInterval.contains(r.getDelegate.getTimestamp))
-      .persist(StorageLevel.MEMORY_AND_DISK_SER)
+      ).countApproxDistinct()
     // Get dimension values and dims per timestamp
 
-    log.info("Defining uniques mapping")
-    val data_dims = raw_data
-      .map(
-        r => {
-          passableGran.getDelegate.truncate(r.getDelegate.getTimestampFromEpoch) -> r.getDimensionValues
-        }
-      )
-    log.info("Starting uniqes")
-    val uniques = data_dims.countApproxDistinct()
     val numParts = uniques / rowsPerPartition + 1
     log.info("Found %s unique values. Breaking into %s partitions", uniques.toString, numParts.toString)
 
-    val partitioned_data = raw_data
+    val partitioned_data = baseData
       .repartition(numParts.toInt)
       .mapPartitionsWithIndex(
-        (index, rows) => {
+        (index, it) => {
+          val parser = parseSpec.getDelegate.makeParser()
+          val mapParser = new MapInputRowParser(parseSpec.getDelegate)
+          val rows = it
+            .map(parser.parse)
+            .map(r => mapParser.parse(r).asInstanceOf[MapBasedInputRow])
+            .filter(r => ingestInterval.contains(r.getTimestamp))
+
           val pusher: DataSegmentPusher = SerializedJsonStatic.injector.getInstance(classOf[DataSegmentPusher])
           val tmpPersistDir = Files.createTempDirectory("persist").toFile
           val tmpMergeDir = Files.createTempDirectory("merge").toFile
@@ -151,28 +160,53 @@ object SparkDruidIndexer
                         , rowsPerPersist
                       )
                     )(
-                        (index: OnheapIncrementalIndex, r) => {
-                          index.add(index.formatRow(r.getDelegate))
-                          index
-                        }
-                      )
+                      (index: OnheapIncrementalIndex, r) => {
+                        index.add(index.formatRow(r))
+                        index
+                      }
+                    )
                   ).map(
-                    (incIndex: OnheapIncrementalIndex) => {
-                      new QueryableIndexIndexableAdapter(
-                        closer.register(
-                          IndexIO.loadIndex(
-                            IndexMerger.persist(incIndex, tmpPersistDir, null, new IndexSpec())
-                          )
+                  (incIndex: OnheapIncrementalIndex) => {
+                    new QueryableIndexIndexableAdapter(
+                      closer.register(
+                        IndexIO.loadIndex(
+                          IndexMerger.persist(incIndex, tmpPersistDir, null, new IndexSpec())
                         )
                       )
-                    }
-                  ).toSeq
+                    )
+                  }
+                ).toSeq
               ),
               aggs.map(_.getDelegate),
               tmpMergeDir,
-            null,
+              null,
               new IndexSpec(),
-              new LoggingProgressIndicator("index-merge")
+              new ProgressIndicator
+              {
+                override def stop(): Unit = {
+                  log.trace("Stop")
+                }
+
+                override def stopSection(s: String): Unit = {
+                  log.trace("Stop [%s]", s)
+                }
+
+                override def progress(): Unit = {
+                  log.trace("Progress")
+                }
+
+                override def startSection(s: String): Unit = {
+                  log.trace("Start [%s]", s)
+                }
+
+                override def progressSection(s: String, s1: String): Unit = {
+                  log.trace("Start [%s]:[%s]", s, s1)
+                }
+
+                override def start(): Unit = {
+                  log.trace("Start")
+                }
+              }
             )
             val dataSegment = JobHelper.serializeOutIndex(
               new DataSegment(
@@ -211,16 +245,22 @@ object SparkDruidIndexer
           }
         }
       )
-    val results = partitioned_data.collect().map(_.getDelegate)
+    val results = partitioned_data.cache().collect().map(_.getDelegate)
     log.info("Finished with %s", util.Arrays.deepToString(results.map(_.toString)))
     results.toSeq
+  }
+
+  def getDimValues(r: MapBasedInputRow) = {
+    collectionAsScalaIterable(r.getDimensions)
+      .toSet
+      .map((s: String) => s -> collectionAsScalaIterable(r.getDimension(s)).toSet)
   }
 }
 
 object SerializedJsonStatic
 {
-  val log: Logger = new Logger(classOf[SerializedJson[Any]])
-  val injector    = Initialization.makeInjectorWithModules(
+  val log: Logger      = new Logger(classOf[SerializedJson[Any]])
+  val injector         = Initialization.makeInjectorWithModules(
     GuiceInjectors.makeStartupInjector(), List[Module](
       new Module
       {
@@ -235,49 +275,73 @@ object SerializedJsonStatic
       }
     )
   )
-  val mapper      = injector.getInstance(Key.get(classOf[ObjectMapper], classOf[Smile]))
+  val mapper           = injector.getInstance(Key.get(classOf[ObjectMapper], classOf[Smile]))
     .copy()
     .configure(
       JsonParser.Feature.AUTO_CLOSE_SOURCE,
       false
     )
+  val mapTypeReference = new TypeReference[java.util.Map[String, Object]] {}
 }
 
 /**
  * This is tricky. The type enforcing is only done at compile time. The JSON serde plays it fast and loose with the types
  */
 @SerialVersionUID(713838456349L)
-class SerializedJson[A](inputDelegate: A) extends Serializable
+class SerializedJson[A](inputDelegate: A) extends KryoSerializable with Serializable
 {
   @transient var delegate: A = inputDelegate
 
   @throws[IOException]
-  private def writeObject(out: ObjectOutputStream) = {
-    val m = mapAsJavaMap(
-      Map(
-        "class" -> inputDelegate.getClass.getCanonicalName,
-        "delegate" -> SerializedJsonStatic.mapper.writeValueAsString(delegate)
-      )
-    )
-    if (SerializedJsonStatic.log.isDebugEnabled) {
-      SerializedJsonStatic.log.debug("Writing %s", delegate.toString)
-    }
-    out.write(SerializedJsonStatic.mapper.writeValueAsBytes(m))
+  private def writeObject(output: ObjectOutputStream) = {
+    innerWrite(output)
   }
+
+  override def write(kryo: Kryo, output: Output): Unit = {
+    innerWrite(output)
+  }
+
+  def innerWrite(output: OutputStream): Unit = {
+    val m = toJavaMap
+    val b = SerializedJsonStatic.mapper.writeValueAsBytes(m)
+    if (SerializedJsonStatic.log.isTraceEnabled) {
+      SerializedJsonStatic.log.trace("Writing [%s] in %s bytes", delegate.toString, new Integer(b.length))
+    }
+    output.write(b)
+  }
+
+  def toJavaMap = mapAsJavaMap(
+    Map(
+      "class" -> inputDelegate.getClass.getCanonicalName,
+      "delegate" -> SerializedJsonStatic.mapper.writeValueAsString(delegate)
+    )
+  )
+
+  def getMap(input: InputStream) = SerializedJsonStatic
+    .mapper
+    .readValue(input, SerializedJsonStatic.mapTypeReference)
+    .asInstanceOf[java.util.Map[String, Object]].toMap[String, Object]
+
 
   @throws[IOException]
   @throws[ClassNotFoundException]
-  private def readObject(in: ObjectInputStream) = {
-    val m: Map[String, Object] = SerializedJsonStatic
-      .mapper
-      .readValue(in, new TypeReference[java.util.Map[String, Object]] {})
-      .asInstanceOf[java.util.Map[String, Object]].toMap
+  private def readObject(input: ObjectInputStream) = {
+    SerializedJsonStatic.log.trace("Reading Object")
+    fillFromMap(getMap(input))
+  }
+
+  override def read(kryo: Kryo, input: Input): Unit = {
+    SerializedJsonStatic.log.trace("Reading Kryo")
+    fillFromMap(getMap(input))
+  }
+
+  def fillFromMap(m: Map[String, Object]): Unit = {
     val clazzName: Class[_] = m.get("class") match {
       case Some(cn) => if (Thread.currentThread().getContextClassLoader == null) {
-        SerializedJsonStatic.log.debug("Using class's classloader [%s]", getClass.getClassLoader)
+        SerializedJsonStatic.log.trace("Using class's classloader [%s]", getClass.getClassLoader)
         getClass.getClassLoader.loadClass(cn.toString)
       } else {
-        SerializedJsonStatic.log.debug("Using context classloader [%s]", Thread.currentThread().getContextClassLoader)
+        SerializedJsonStatic.log.trace("Using context classloader [%s]", Thread.currentThread().getContextClassLoader)
         Thread.currentThread().getContextClassLoader.loadClass(cn.toString)
       }
       case _ => throw new NullPointerException("Missing `class`")
@@ -286,8 +350,8 @@ class SerializedJson[A](inputDelegate: A) extends Serializable
       case Some(d) => SerializedJsonStatic.mapper.readValue(d.toString, clazzName).asInstanceOf[A]
       case _ => throw new NullPointerException("Missing `delegate`")
     }
-    if (SerializedJsonStatic.log.isDebugEnabled) {
-      SerializedJsonStatic.log.debug("Read in %s", delegate.toString)
+    if (SerializedJsonStatic.log.isTraceEnabled) {
+      SerializedJsonStatic.log.trace("Read in %s", delegate.toString)
     }
   }
 
@@ -295,32 +359,43 @@ class SerializedJson[A](inputDelegate: A) extends Serializable
 }
 
 @SerialVersionUID(68710585891L)
-class SerializedHadoopConfig(delegate: Configuration) extends Serializable
+class SerializedHadoopConfig(delegate: Configuration) extends KryoSerializable with Serializable
 {
-  var del = delegate
-
-  def getDelegate = del
+  @transient var del = delegate
 
   @throws[IOException]
   private def writeObject(out: ObjectOutputStream) = {
+    SerializedJsonStatic.log.trace("Writing Hadoop Object")
     del.write(out)
   }
 
   @throws[IOException]
   @throws[ClassNotFoundException]
   private def readObject(in: ObjectInputStream) = {
+    SerializedJsonStatic.log.trace("Reading Hadoop Object")
     del = new Configuration()
     del.readFields(in)
   }
-}
 
+  def getDelegate = del
+
+  override def write(kryo: Kryo, output: Output): Unit = {
+    SerializedJsonStatic.log.trace("Writing Hadoop Kryo")
+    writeObject(new ObjectOutputStream(output))
+  }
+
+  override def read(kryo: Kryo, input: Input): Unit = {
+    SerializedJsonStatic.log.trace("Reading Hadoop Kryo")
+    readObject(new ObjectInputStream(input))
+  }
+}
+/*
 @SerialVersionUID(978137489L)
-class SerializedMapBasedInputRow(inputDelegate: MapBasedInputRow) extends Serializable
+class SerializedMapBasedInputRow(inputDelegate: MapBasedInputRow) extends KryoSerializable with Serializable
 {
   @transient var delegate: MapBasedInputRow = inputDelegate
 
-  @throws[IOException]
-  private def writeObject(out: ObjectOutputStream) = {
+  private def innerWrite(output: OutputStream): Unit = {
     val m = mapAsJavaMap(
       Map(
         "timestamp" -> getDelegate.getTimestampFromEpoch,
@@ -328,18 +403,28 @@ class SerializedMapBasedInputRow(inputDelegate: MapBasedInputRow) extends Serial
         "event" -> getDelegate.getEvent
       )
     )
-    if (SerializedJsonStatic.log.isDebugEnabled) {
-      SerializedJsonStatic.log.debug("Writing %s", delegate.toString)
+    val b = SerializedJsonStatic.mapper.writeValueAsBytes(m)
+    if (SerializedJsonStatic.log.isTraceEnabled) {
+      SerializedJsonStatic.log.trace("Writing %s in %s bytes", delegate.toString, new Integer(b.length))
     }
-    out.write(SerializedJsonStatic.mapper.writeValueAsBytes(m))
+    output.write(b)
+  }
+
+  override def write(kryo: Kryo, output: Output): Unit = {
+    SerializedJsonStatic.log.trace("Writing MapInputRow Kryo")
+    innerWrite(output)
   }
 
   @throws[IOException]
-  @throws[ClassNotFoundException]
-  private def readObject(in: ObjectInputStream) = {
+  private def writeObject(output: ObjectOutputStream) = {
+    SerializedJsonStatic.log.trace("Writing MapInputRow Object")
+    innerWrite(output)
+  }
+
+  private def innerRead(input: InputStream): Unit = {
     val m: Map[String, Object] = SerializedJsonStatic
       .mapper
-      .readValue(in, new TypeReference[java.util.Map[String, Object]] {})
+      .readValue(input, new TypeReference[java.util.Map[String, Object]] {})
       .asInstanceOf[java.util.Map[String, Object]].toMap
     val timestamp: Long = m.get("timestamp") match {
       case Some(l) => l.asInstanceOf[Long]
@@ -354,9 +439,21 @@ class SerializedMapBasedInputRow(inputDelegate: MapBasedInputRow) extends Serial
       case _ => throw new NullPointerException("Missing `event`")
     }
     delegate = new MapBasedInputRow(timestamp, dimensions, event)
-    if (SerializedJsonStatic.log.isDebugEnabled) {
-      SerializedJsonStatic.log.debug("Read in %s", delegate)
+    if (SerializedJsonStatic.log.isTraceEnabled) {
+      SerializedJsonStatic.log.trace("Read in %s", delegate)
     }
+  }
+
+  override def read(kryo: Kryo, input: Input): Unit = {
+    SerializedJsonStatic.log.trace("Reading MapInputRow Kryo")
+    innerRead(input)
+  }
+
+  @throws[IOException]
+  @throws[ClassNotFoundException]
+  private def readObject(input: ObjectInputStream) = {
+    SerializedJsonStatic.log.trace("Reading MapInputRow Object")
+    innerRead(input)
   }
 
   override def hashCode(): Int =
@@ -370,3 +467,4 @@ class SerializedMapBasedInputRow(inputDelegate: MapBasedInputRow) extends Serial
     .toSet
     .map((s: String) => s -> collectionAsScalaIterable(getDelegate.getDimension(s)).toSet)
 }
+*/
