@@ -84,10 +84,6 @@ object SparkDruidIndexer
 
     val baseData = sc
       .union(data_file.map(sc.textFile(_)))
-      .persist(StorageLevel.MEMORY_AND_DISK)
-
-    log.info("Starting uniqes")
-    val uniques = baseData
       .mapPartitions(
         (it) => {
           val parser = parseSpec.getDelegate.makeParser()
@@ -102,7 +98,11 @@ object SparkDruidIndexer
               }
             )
         }
-      ).countApproxDistinct()
+      )
+      .persist(StorageLevel.MEMORY_AND_DISK)
+
+    log.info("Starting uniqes")
+    val uniques = baseData.countApproxDistinct()
     // Get dimension values and dims per timestamp
 
     val numParts = uniques / rowsPerPartition + 1
@@ -112,12 +112,8 @@ object SparkDruidIndexer
       .repartition(numParts.toInt)
       .mapPartitionsWithIndex(
         (index, it) => {
-          val parser = parseSpec.getDelegate.makeParser()
-          val mapParser = new MapInputRowParser(parseSpec.getDelegate)
           val rows = it
-            .map(parser.parse)
-            .map(r => mapParser.parse(r).asInstanceOf[MapBasedInputRow])
-            .filter(r => ingestInterval.contains(r.getTimestamp))
+            .map(r => new MapBasedInputRow(r._1, parseSpec.getDelegate.getDimensionsSpec.getDimensions, r._2.toMap))
 
           val pusher: DataSegmentPusher = SerializedJsonStatic.injector.getInstance(classOf[DataSegmentPusher])
           val tmpPersistDir = Files.createTempDirectory("persist").toFile

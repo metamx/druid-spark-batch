@@ -25,7 +25,7 @@ import java.util
 import java.util.{Objects, Properties}
 
 import com.fasterxml.jackson.annotation.{JsonCreator, JsonProperty}
-import com.google.common.base.{Optional, Preconditions, Strings}
+import com.google.common.base.{Preconditions, Strings}
 import com.google.common.collect.{ImmutableMap, Iterables}
 import com.google.inject.Injector
 import com.metamx.common.logger.Logger
