@@ -28,6 +28,8 @@ import io.druid.granularity.QueryGranularity
 import io.druid.indexing.common.task.Task
 import io.druid.jackson.DefaultObjectMapper
 import io.druid.query.aggregation.{CountAggregatorFactory, DoubleSumAggregatorFactory, LongSumAggregatorFactory}
+import io.druid.segment.IndexSpec
+import io.druid.segment.data.RoaringBitmapSerdeFactory
 import org.joda.time.Interval
 import org.scalatest.{FlatSpec, Matchers}
 
@@ -37,9 +39,9 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
 {
   val objectMapper           = new DefaultObjectMapper()
     .registerModule(
-    new SimpleModule("TestScalaBatchIndexTask")
-      .registerSubtypes(new NamedType(classOf[SparkBatchIndexTask], SparkBatchIndexTask.TASK_TYPE))
-  )
+      new SimpleModule("TestScalaBatchIndexTask")
+        .registerSubtypes(new NamedType(classOf[SparkBatchIndexTask], SparkBatchIndexTask.TASK_TYPE))
+    )
   val taskId                 = "taskId"
   val dataSource             = "defaultDataSource"
   val interval               = Interval.parse("2010/2020")
@@ -114,11 +116,11 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
     ("druid.processing.columnCache.sizeBytes", "1000000000"),
     ("some.property", "someValue")
   ).foldLeft(new Properties())(
-      (p, e) => {
-        p.setProperty(e._1, e._2)
-        p
-      }
-    )
+    (p, e) => {
+      p.setProperty(e._1, e._2)
+      p
+    }
+  )
   val master                 = "local[999]"
   val queryGranularity       = QueryGranularity.ALL
 
@@ -180,6 +182,47 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
     )
     assert(task1.equals(task2))
     assert(task2.equals(task1))
+
+    assert(
+      task1.equals(
+        new SparkBatchIndexTask(
+          taskId,
+          dataSource,
+          interval,
+          dataFiles,
+          parseSpec,
+          outPath,
+          aggFactories,
+          rowsPerPartition,
+          rowsPerFlush,
+          properties,
+          master,
+          queryGranularity,
+          Map[String, Object]()
+        )
+      )
+    )
+
+    assert(
+      task1.equals(
+        new SparkBatchIndexTask(
+          taskId,
+          dataSource,
+          interval,
+          dataFiles,
+          parseSpec,
+          outPath,
+          aggFactories,
+          rowsPerPartition,
+          rowsPerFlush,
+          properties,
+          master,
+          queryGranularity,
+          Map[String, Object](),
+          new IndexSpec()
+        )
+      )
+    )
   }
 
   "The ScalaBatchIndexTask" should "not be equal for dissimilar tasks" in {
@@ -196,24 +239,6 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
       properties,
       master,
       queryGranularity
-    )
-    assert(
-      task1.equals(
-        new SparkBatchIndexTask(
-          taskId,
-          dataSource,
-          interval,
-          dataFiles,
-          parseSpec,
-          outPath,
-          aggFactories,
-          rowsPerPartition,
-          rowsPerFlush,
-          properties,
-          master,
-          queryGranularity
-        )
-      )
     )
     assert(
       !task1.equals(
@@ -386,6 +411,47 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
           properties,
           master,
           QueryGranularity.MINUTE
+        )
+      )
+    )
+
+    assert(
+      !task1.equals(
+        new SparkBatchIndexTask(
+          taskId,
+          dataSource,
+          interval,
+          dataFiles,
+          parseSpec,
+          outPath,
+          aggFactories,
+          rowsPerPartition,
+          rowsPerFlush,
+          properties,
+          master,
+          queryGranularity,
+          Map[String, Object](),
+          new IndexSpec(new RoaringBitmapSerdeFactory(), "lzf", "lzf")
+        )
+      )
+    )
+
+    assert(
+      !task1.equals(
+        new SparkBatchIndexTask(
+          taskId,
+          dataSource,
+          interval,
+          dataFiles,
+          parseSpec,
+          outPath,
+          aggFactories,
+          rowsPerPartition,
+          rowsPerFlush,
+          properties,
+          master,
+          queryGranularity,
+          Map[String, Object]("test" -> "oops")
         )
       )
     )

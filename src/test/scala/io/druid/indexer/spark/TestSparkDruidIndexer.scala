@@ -21,13 +21,13 @@ package io.druid.indexer.spark
 
 import java.io.Closeable
 import java.nio.file.Files
-import java.util
 
 import com.google.common.io.Closer
 import com.metamx.common.logger.Logger
 import io.druid.data.input.impl.{DelimitedParseSpec, DimensionsSpec, ParseSpec, TimestampSpec}
 import io.druid.granularity.QueryGranularity
 import io.druid.query.aggregation.{CountAggregatorFactory, DoubleSumAggregatorFactory, LongSumAggregatorFactory}
+import io.druid.segment.IndexSpec
 import org.apache.commons.io.FileUtils
 import org.apache.spark.{SparkConf, SparkContext}
 import org.joda.time.Interval
@@ -142,6 +142,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         80000,
         outDir.toString,
         QueryGranularity.DAY,
+        new IndexSpec(),
         sc
       )
       assert(loadResults.length == 3)

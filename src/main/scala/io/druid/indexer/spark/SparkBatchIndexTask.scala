@@ -37,6 +37,7 @@ import io.druid.indexing.common.task.AbstractTask
 import io.druid.indexing.common.{TaskLock, TaskStatus, TaskToolbox}
 import io.druid.initialization.Initialization
 import io.druid.query.aggregation.AggregatorFactory
+import io.druid.segment.IndexSpec
 import io.druid.timeline.DataSegment
 import io.tesla.aether.internal.DefaultTeslaAether
 import org.apache.spark.{SparkConf, SparkContext}
@@ -84,7 +85,9 @@ class SparkBatchIndexTask(
   @JsonProperty("queryGranularity")
   queryGranularity: QueryGranularity,
   @JsonProperty("context")
-  context: util.Map[String, Object] = Map[String, Object]()
+  context: util.Map[String, Object] = Map[String, Object](),
+  @JsonProperty("indexSpec")
+  indexSpec: IndexSpec = new IndexSpec()
   ) extends AbstractTask(
   if (id == null) {
     AbstractTask
@@ -145,13 +148,19 @@ class SparkBatchIndexTask(
     } else {
       master
     }
+  val indexSpec_           : IndexSpec                         =
+    if (indexSpec == null) {
+      new IndexSpec()
+    } else {
+      indexSpec
+    }
 
   override def getType: String = SparkBatchIndexTask.TASK_TYPE
 
   override def run(toolbox: TaskToolbox): TaskStatus = {
 
-    var optionalSC : Option[SparkContext] = Option.empty
-    var status : Option[TaskStatus] = Option.empty
+    var optionalSC: Option[SparkContext] = Option.empty
+    var status: Option[TaskStatus] = Option.empty
     val priorLoader = Thread.currentThread.getContextClassLoader
     try {
       Thread.currentThread.setContextClassLoader(classOf[SerializedJson[ParseSpec]].getClassLoader)
@@ -255,11 +264,12 @@ class SparkBatchIndexTask(
         dataSource,
         new SerializedJson[ParseSpec](parseSpec),
         interval,
-        aggregatorFactories_,
-        rowsPerPartition_,
-        rowsPerPersist_,
+        getAggregatorFactories,
+        getRowsPerPartition,
+        getRowsPerPersist,
         outPathString,
         getQueryGranularity,
+        getIndexSpec,
         sc
       ).map(_.withVersion(version))
       log.info("Found segments `%s`", util.Arrays.deepToString(dataSegments.toArray))
@@ -335,7 +345,9 @@ class SparkBatchIndexTask(
           .getTimestampFormat,
         other.getParseSpec.getTimestampSpec.getTimestampFormat
       ) &&
-      Objects.equals(getQueryGranularity, other.getQueryGranularity)
+      Objects.equals(getQueryGranularity, other.getQueryGranularity) &&
+      Objects.equals(getContext, other.getContext) &&
+      Objects.equals(getIndexSpec, other.getIndexSpec)
   }
 
   @throws(classOf[Exception])
@@ -378,6 +390,12 @@ class SparkBatchIndexTask(
 
   @JsonProperty("queryGranularity")
   def getQueryGranularity = queryGranularity
+
+  @JsonProperty("context")
+  override def getContext = super.getContext
+
+  @JsonProperty("indexSpec")
+  def getIndexSpec = indexSpec_
 }
 
 object SparkBatchIndexTask
@@ -388,7 +406,8 @@ object SparkBatchIndexTask
     classOf[SerializedJson[QueryGranularity]],
     classOf[SerializedJson[QueryGranularity]],
     classOf[SerializedJson[AggregatorFactory]],
-    classOf[SerializedJson[ParseSpec]]
+    classOf[SerializedJson[ParseSpec]],
+    classOf[SerializedJson[IndexSpec]]
   ).asInstanceOf[Array[Class[_]]]
   val log          = new Logger(SparkBatchIndexTask.getClass)
   val TASK_TYPE    = "index_spark"

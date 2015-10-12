@@ -70,6 +70,7 @@ object SparkDruidIndexer
     rowsPerPersist: Int,
     outPathString: String,
     queryGran: QueryGranularity,
+    indexSpec: IndexSpec,
     sc: SparkContext
     ): Seq[DataSegment] =
   {
@@ -107,6 +108,8 @@ object SparkDruidIndexer
 
     val numParts = uniques / rowsPerPartition + 1
     log.info("Found %s unique values. Breaking into %s partitions", uniques.toString, numParts.toString)
+
+    val indexSpec_passable = new SerializedJson[IndexSpec](indexSpec)
 
     val partitioned_data = baseData
       .repartition(numParts.toInt)
@@ -176,7 +179,7 @@ object SparkDruidIndexer
               aggs.map(_.getDelegate),
               tmpMergeDir,
               null,
-              new IndexSpec(),
+              indexSpec_passable.getDelegate,
               new ProgressIndicator
               {
                 override def stop(): Unit = {
