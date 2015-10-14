@@ -101,7 +101,6 @@ object SparkDruidIndexer
         },
         preservesPartitioning = false
       )
-      .repartition(1) // TODO: better
       .persist(StorageLevel.MEMORY_AND_DISK)
 
     log.info("Starting uniqes")
