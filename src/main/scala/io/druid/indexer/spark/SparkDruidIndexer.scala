@@ -25,15 +25,14 @@ import java.util
 
 import com.esotericsoftware.kryo.io.{Input, Output}
 import com.esotericsoftware.kryo.{Kryo, KryoSerializable}
-import com.fasterxml.jackson.core.JsonParser
 import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.common.io.Closer
 import com.google.inject.{Binder, Key, Module}
 import com.metamx.common.logger.Logger
-import io.druid.data.input.MapBasedInputRow
+import com.metamx.common.{Granularity, IAE, ISE}
 import io.druid.data.input.impl._
-import io.druid.granularity.QueryGranularity
+import io.druid.data.input.{InputRow, MapBasedInputRow}
 import io.druid.guice.annotations.{Self, Smile}
 import io.druid.guice.{GuiceInjectors, JsonConfigProvider}
 import io.druid.indexer.JobHelper
@@ -41,6 +40,7 @@ import io.druid.initialization.Initialization
 import io.druid.query.aggregation.AggregatorFactory
 import io.druid.segment._
 import io.druid.segment.incremental.{IncrementalIndexSchema, OnheapIncrementalIndex}
+import io.druid.segment.indexing.DataSchema
 import io.druid.segment.loading.DataSegmentPusher
 import io.druid.server.DruidNode
 import io.druid.timeline.DataSegment
@@ -50,8 +50,8 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapreduce.TaskAttemptID
 import org.apache.hadoop.util.Progressable
-import org.apache.spark.SparkContext
 import org.apache.spark.storage.StorageLevel
+import org.apache.spark.{Partitioner, SparkContext}
 import org.joda.time.{DateTime, Interval}
 
 import scala.collection.JavaConversions._
@@ -62,61 +62,107 @@ object SparkDruidIndexer
 
   def loadData(
     data_file: Seq[String],
-    dataSource: String,
-    parseSpec: SerializedJson[ParseSpec],
+    dataSchema: SerializedJson[DataSchema],
     ingestInterval: Interval,
-    aggregatorFactories: Seq[AggregatorFactory],
     rowsPerPartition: Long,
     rowsPerPersist: Int,
     outPathString: String,
-    queryGran: QueryGranularity,
     indexSpec: IndexSpec,
     sc: SparkContext
     ): Seq[DataSegment] =
   {
+    val dataSource = dataSchema.getDelegate.getDataSource
     log.info("Launching Spark task with jar version [%s]", getClass.getPackage.getImplementationVersion)
     val dataSegmentVersion = DateTime.now().toString
     val hadoopConfig = new SerializedHadoopConfig(sc.hadoopConfiguration)
-    val aggs: Array[SerializedJson[AggregatorFactory]] = aggregatorFactories
+    val aggs: Array[SerializedJson[AggregatorFactory]] = dataSchema.getDelegate.getAggregators
       .map(x => new SerializedJson[AggregatorFactory](x))
-      .toArray
     log.info("Starting caching of raw data for [%s] over interval [%s]", dataSource, ingestInterval)
-    val passableGran = new SerializedJson[QueryGranularity](queryGran)
 
     val baseData = sc
       .union(data_file.map(sc.textFile(_)))
       .mapPartitions(
         (it) => {
-          val parser = parseSpec.getDelegate.makeParser()
-          val mapParser = new MapInputRowParser(parseSpec.getDelegate)
-          val row = it.map(parser.parse)
-          row
-            .map(r => mapParser.parse(r).asInstanceOf[MapBasedInputRow])
+          val parser = dataSchema.getDelegate.getParser.asInstanceOf[StringInputRowParser]
+          it.map(parser.parse)
             .filter(r => ingestInterval.contains(r.getTimestamp))
             .map(
               r => {
-                passableGran.getDelegate.truncate(r.getTimestampFromEpoch) -> getDimValues(r)
+                val queryGran = dataSchema.getDelegate.getGranularitySpec.getQueryGranularity
+                val segmentGran = dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity
+                var k: Long = queryGran.truncate(r.getTimestampFromEpoch)
+                if (k < 0) {
+                  // Example: AllGranularity
+                  k = segmentGran.truncate(new DateTime(r.getTimestampFromEpoch)).getMillis
+                }
+                k -> getDimValues(r)
               }
             )
-        }
+        },
+        preservesPartitioning = false
       )
+      .repartition(1) // TODO: better
       .persist(StorageLevel.MEMORY_AND_DISK)
 
     log.info("Starting uniqes")
-    val uniques = baseData.countApproxDistinct()
-    // Get dimension values and dims per timestamp
+    val partitionMap: Map[Long, Long] = baseData
+      .countApproxDistinctByKey(
+        0.05,
+        new DateBucketPartitioner(dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity, ingestInterval)
+      )
+      .collect().map(_.x).toMap
 
-    val numParts = uniques / rowsPerPartition + 1
-    log.info("Found %s unique values. Breaking into %s partitions", uniques.toString, numParts.toString)
+    // Map key tuple is DateBucket, PartitionInBucket with map value of Partition #
+    val hashToPartitionMap: Map[(Long, Long), Int] = getSizedPartitionMap(partitionMap, rowsPerPartition)
+
+    // Get dimension values and dims per timestamp
+    hashToPartitionMap.foreach {
+      (a: ((Long, Long), Int)) => {
+        log
+          .info(
+            "%s",
+            "Date Bucket [%s] with partition number [%s] has total partition number [%s]" format
+              (a._1._1, a._1._2, a._2)
+          )
+      }
+    }
 
     val indexSpec_passable = new SerializedJson[IndexSpec](indexSpec)
 
     val partitioned_data = baseData
-      .repartition(numParts.toInt)
+      .map(_ -> 0)
+      .partitionBy(
+        new DateBucketAndHashPartitioner(
+          dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity,
+          ingestInterval,
+          hashToPartitionMap
+        )
+      )
       .mapPartitionsWithIndex(
         (index, it) => {
+
+          val partitionNums = hashToPartitionMap.filter(_._2 == index).map(_._1._2.toInt).toSeq
+          if (partitionNums.isEmpty) {
+            throw new ISE(
+              "%s",
+              "Partition [%s] not found in partition map. Valid parts: %s" format
+                (index, hashToPartitionMap.values)
+            )
+          }
+          if (partitionNums.length != 1) {
+            throw new
+                ISE("%s", "Too many partitions found for index [%s] Found %s" format(index, partitionNums))
+          }
+          val partitionNum = partitionNums.head
+          val timeBucket = hashToPartitionMap.filter(_._2 == index).map(_._1._1).head
+          val partitionCount = hashToPartitionMap.count(_._1._1 == timeBucket)
+
+          val parser: InputRowParser[_] = SerializedJsonStatic.mapper
+            .convertValue(dataSchema.getDelegate.getParserMap, classOf[InputRowParser[_]])
+          val dimensions = parser.getParseSpec.getDimensionsSpec.getDimensions
+
           val rows = it
-            .map(r => new MapBasedInputRow(r._1, parseSpec.getDelegate.getDimensionsSpec.getDimensions, r._2.toMap))
+            .map(r => new MapBasedInputRow(r._1._1, dimensions, r._1._2.toMap))
 
           val pusher: DataSegmentPusher = SerializedJsonStatic.injector.getInstance(classOf[DataSegmentPusher])
           val tmpPersistDir = Files.createTempDirectory("persist").toFile
@@ -150,13 +196,15 @@ object SparkDruidIndexer
                   .grouped(rowsPerPersist)
                   .map(
                     _.foldLeft(
-                      new OnheapIncrementalIndex(
-                        new IncrementalIndexSchema.Builder()
-                          .withDimensionsSpec(parseSpec.getDelegate.getDimensionsSpec)
-                          .withQueryGranularity(passableGran.getDelegate)
-                          .withMetrics(aggs.map(_.getDelegate))
-                          .build()
-                        , rowsPerPersist
+                      closer.register(
+                        new OnheapIncrementalIndex(
+                          new IncrementalIndexSchema.Builder()
+                            .withDimensionsSpec(parser.getParseSpec.getDimensionsSpec)
+                            .withQueryGranularity(dataSchema.getDelegate.getGranularitySpec.getQueryGranularity)
+                            .withMetrics(aggs.map(_.getDelegate))
+                            .build()
+                          , rowsPerPersist
+                        )
                       )
                     )(
                       (index: OnheapIncrementalIndex, r) => {
@@ -213,9 +261,9 @@ object SparkDruidIndexer
                 ingestInterval,
                 dataSegmentVersion,
                 null,
-                parseSpec.getDelegate.getDimensionsSpec.getDimensions,
+                dimensions,
                 aggs.map(_.getDelegate.getName).toList,
-                new NumberedShardSpec(index, numParts.toInt),
+                new NumberedShardSpec(partitionNum, partitionCount),
                 -1,
                 -1
               ),
@@ -249,17 +297,39 @@ object SparkDruidIndexer
     results.toSeq
   }
 
-  def getDimValues(r: MapBasedInputRow) = {
+  def getDimValues(r: InputRow) = {
     collectionAsScalaIterable(r.getDimensions)
       .toSet
       .map((s: String) => s -> collectionAsScalaIterable(r.getDimension(s)).toSet)
   }
+
+  /**
+   * Take a map of indices and size for that index, and return a map of (index, sub_index)->new_index
+   * each new_index of which can have at most rowsPerPartition assuming random-ish hashing into the indices
+   * @param inMap A map of index to count of items in that index
+   * @param rowsPerPartition The maximum desired size per output index.
+   * @return A map of (index, sub_index)->new_index . The size of this map times rowsPerPartition is greater than
+   *         or equal to the number of events (sum of keys of inMap)
+   */
+  def getSizedPartitionMap(inMap: Map[Long, Long], rowsPerPartition: Long): Map[(Long, Long), Int] = inMap
+    .filter(_._2 > 0)
+    .map(
+      (x) => {
+        val dateRangeBucket = x._1
+        val numEventsInRange = x._2
+        Range
+          .apply(0, (numEventsInRange / rowsPerPartition + 1).toInt)
+          .map(a => (dateRangeBucket, a.toLong))
+      }
+    )
+    .foldLeft(Seq[(Long, Long)]())(_ ++ _)
+    .foldLeft(Map[(Long, Long), Int]())((b: Map[(Long, Long), Int], v: (Long, Long)) => b + (v -> b.size))
 }
 
 object SerializedJsonStatic
 {
-  val log: Logger      = new Logger(classOf[SerializedJson[Any]])
-  val injector         = Initialization.makeInjectorWithModules(
+  val log: Logger = new Logger(classOf[SerializedJson[Any]])
+  val injector    = Initialization.makeInjectorWithModules(
     GuiceInjectors.makeStartupInjector(), List[Module](
       new Module
       {
@@ -274,12 +344,26 @@ object SerializedJsonStatic
       }
     )
   )
-  val mapper           = injector.getInstance(Key.get(classOf[ObjectMapper], classOf[Smile]))
-    .copy()
-    .configure(
-      JsonParser.Feature.AUTO_CLOSE_SOURCE,
-      false
-    )
+  // I would use ObjectMapper.copy().configure(JsonParser.Feature.AUTO_CLOSE_SOURCE, false)
+  // But https://github.com/FasterXML/jackson-databind/issues/696 isn't until 4.5.1, and anything 4.5 or greater breaks
+  // EVERYTHING
+  // So instead we have to capture the close
+  val mapper      = injector.getInstance(Key.get(classOf[ObjectMapper], classOf[Smile]))
+
+  def captureCloseOutputStream(ostream: OutputStream): OutputStream =
+    new FilterOutputStream(ostream)
+    {
+      override def close(): Unit = {
+        // Ignore
+      }
+    }
+
+  def captureCloseInputStream(istream: InputStream): InputStream = new FilterInputStream(istream) {
+    override def close(): Unit = {
+      // Ignore
+    }
+  }
+
   val mapTypeReference = new TypeReference[java.util.Map[String, Object]] {}
 }
 
@@ -300,14 +384,8 @@ class SerializedJson[A](inputDelegate: A) extends KryoSerializable with Serializ
     innerWrite(output)
   }
 
-  def innerWrite(output: OutputStream): Unit = {
-    val m = toJavaMap
-    val b = SerializedJsonStatic.mapper.writeValueAsBytes(m)
-    if (SerializedJsonStatic.log.isTraceEnabled) {
-      SerializedJsonStatic.log.trace("Writing [%s] in %s bytes", delegate.toString, new Integer(b.length))
-    }
-    output.write(b)
-  }
+  def innerWrite(output: OutputStream): Unit = SerializedJsonStatic.mapper
+    .writeValue(SerializedJsonStatic.captureCloseOutputStream(output), toJavaMap)
 
   def toJavaMap = mapAsJavaMap(
     Map(
@@ -318,7 +396,7 @@ class SerializedJson[A](inputDelegate: A) extends KryoSerializable with Serializ
 
   def getMap(input: InputStream) = SerializedJsonStatic
     .mapper
-    .readValue(input, SerializedJsonStatic.mapTypeReference)
+    .readValue(SerializedJsonStatic.captureCloseInputStream(input), SerializedJsonStatic.mapTypeReference)
     .asInstanceOf[java.util.Map[String, Object]].toMap[String, Object]
 
 
@@ -389,82 +467,46 @@ class SerializedHadoopConfig(delegate: Configuration) extends KryoSerializable w
   }
 }
 
-/*
-@SerialVersionUID(978137489L)
-class SerializedMapBasedInputRow(inputDelegate: MapBasedInputRow) extends KryoSerializable with Serializable
+class DateBucketPartitioner(gran: Granularity, interval: Interval) extends Partitioner
 {
-  @transient var delegate: MapBasedInputRow = inputDelegate
+  val intervalMap: Map[Interval, Int] = gran.getIterable(interval)
+    .toSeq
+    .foldLeft(Map[Interval, Int]())((a, b) => a + (b -> a.size))
 
-  private def innerWrite(output: OutputStream): Unit = {
-    val m = mapAsJavaMap(
-      Map(
-        "timestamp" -> getDelegate.getTimestampFromEpoch,
-        "dimensions" -> getDelegate.getDimensions,
-        "event" -> getDelegate.getEvent
-      )
+  override def numPartitions: Int = intervalMap.size
+
+  override def getPartition(key: Any): Int = key match {
+    case null => throw new NullPointerException("Bad partition key")
+    case (k: Long, v: Any) => getPartition(k)
+    case (k: Long) => intervalMap.getOrElse(
+      gran.bucket(new DateTime(k)),
+      throw new ISE("%s", "unknown bucket for datetime %s" format k)
     )
-    val b = SerializedJsonStatic.mapper.writeValueAsBytes(m)
-    if (SerializedJsonStatic.log.isTraceEnabled) {
-      SerializedJsonStatic.log.trace("Writing %s in %s bytes", delegate.toString, new Integer(b.length))
-    }
-    output.write(b)
+    case x => throw new IAE("%s", "Unknown type for %s" format x)
   }
-
-  override def write(kryo: Kryo, output: Output): Unit = {
-    SerializedJsonStatic.log.trace("Writing MapInputRow Kryo")
-    innerWrite(output)
-  }
-
-  @throws[IOException]
-  private def writeObject(output: ObjectOutputStream) = {
-    SerializedJsonStatic.log.trace("Writing MapInputRow Object")
-    innerWrite(output)
-  }
-
-  private def innerRead(input: InputStream): Unit = {
-    val m: Map[String, Object] = SerializedJsonStatic
-      .mapper
-      .readValue(input, new TypeReference[java.util.Map[String, Object]] {})
-      .asInstanceOf[java.util.Map[String, Object]].toMap
-    val timestamp: Long = m.get("timestamp") match {
-      case Some(l) => l.asInstanceOf[Long]
-      case _ => throw new NullPointerException("Missing `timestamp`")
-    }
-    val dimensions: util.List[String] = m.get("dimensions") match {
-      case Some(d) => d.asInstanceOf[util.List[String]]
-      case _ => throw new NullPointerException("Missing `dimensions`")
-    }
-    val event: util.Map[String, AnyRef] = m.get("event") match {
-      case Some(e) => e.asInstanceOf[util.Map[String, AnyRef]]
-      case _ => throw new NullPointerException("Missing `event`")
-    }
-    delegate = new MapBasedInputRow(timestamp, dimensions, event)
-    if (SerializedJsonStatic.log.isTraceEnabled) {
-      SerializedJsonStatic.log.trace("Read in %s", delegate)
-    }
-  }
-
-  override def read(kryo: Kryo, input: Input): Unit = {
-    SerializedJsonStatic.log.trace("Reading MapInputRow Kryo")
-    innerRead(input)
-  }
-
-  @throws[IOException]
-  @throws[ClassNotFoundException]
-  private def readObject(input: ObjectInputStream) = {
-    SerializedJsonStatic.log.trace("Reading MapInputRow Object")
-    innerRead(input)
-  }
-
-  override def hashCode(): Int =
-  {
-    getDimensionValues.hashCode()
-  }
-
-  def getDelegate = delegate
-
-  def getDimensionValues = collectionAsScalaIterable(getDelegate.getDimensions)
-    .toSet
-    .map((s: String) => s -> collectionAsScalaIterable(getDelegate.getDimension(s)).toSet)
 }
-*/
+
+class DateBucketAndHashPartitioner(gran: Granularity, interval: Interval, partMap: Map[(Long, Long), Int])
+  extends Partitioner
+{
+  val maxTimePerBucket = partMap.groupBy(_._1._1).map(e => e._1 -> e._2.size)
+
+  override def numPartitions: Int = partMap.size
+
+  override def getPartition(key: Any): Int = key match {
+    case (k: Long, v: Set[(String, Set[String]) @unchecked]) =>
+      val dateBucket = gran.truncate(new DateTime(k)).getMillis
+      val modSize = maxTimePerBucket
+        .getOrElse(
+          dateBucket.toLong,
+          throw new ISE("%s", "bad date bucket [%s]. available: %s" format(dateBucket, maxTimePerBucket.keySet))
+        )
+      val hash = Math.abs(v.hashCode()) % modSize
+      partMap
+        .getOrElse(
+          (dateBucket.toLong, hash.toLong),
+          throw new ISE("bad hash and bucket combo: (%s, %s)" format(dateBucket, hash))
+        )
+    case x => throw new IAE("%s", "Unknown type [%s]" format x)
+  }
+}

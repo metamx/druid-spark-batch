@@ -21,32 +21,45 @@ package io.druid.indexer.spark
 
 import java.util.Properties
 
-import com.fasterxml.jackson.databind.jsontype.NamedType
-import com.fasterxml.jackson.databind.module.SimpleModule
-import io.druid.data.input.impl.{DelimitedParseSpec, DimensionsSpec, TimestampSpec}
+import com.fasterxml.jackson.core.`type`.TypeReference
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.google.inject.name.Names
+import com.google.inject.{Binder, Module}
+import com.metamx.common.Granularity
+import io.druid.data.input.impl._
 import io.druid.granularity.QueryGranularity
+import io.druid.guice.GuiceInjectors
 import io.druid.indexing.common.task.Task
-import io.druid.jackson.DefaultObjectMapper
-import io.druid.query.aggregation.{CountAggregatorFactory, DoubleSumAggregatorFactory, LongSumAggregatorFactory}
+import io.druid.initialization.Initialization
+import io.druid.query.aggregation.{AggregatorFactory, CountAggregatorFactory, DoubleSumAggregatorFactory, LongSumAggregatorFactory}
 import io.druid.segment.IndexSpec
 import io.druid.segment.data.RoaringBitmapSerdeFactory
+import io.druid.segment.indexing.DataSchema
+import io.druid.segment.indexing.granularity.{GranularitySpec, UniformGranularitySpec}
 import org.joda.time.Interval
 import org.scalatest.{FlatSpec, Matchers}
 
 import scala.collection.JavaConversions._
 
-class TestScalaBatchIndexTask extends FlatSpec with Matchers
+object TestScalaBatchIndexTask
 {
-  val objectMapper           = new DefaultObjectMapper()
-    .registerModule(
-      new SimpleModule("TestScalaBatchIndexTask")
-        .registerSubtypes(new NamedType(classOf[SparkBatchIndexTask], SparkBatchIndexTask.TASK_TYPE))
+  val injector                                 = Initialization
+    .makeInjectorWithModules(
+      GuiceInjectors.makeStartupInjector(), List[Module](
+        new Module {
+          override def configure(binder: Binder): Unit = {
+            binder.bindConstant.annotatedWith(Names.named("serviceName")).to("druid/test")
+            binder.bindConstant.annotatedWith(Names.named("servicePort")).to(0)
+          }
+        }
+      )
     )
-  val taskId                 = "taskId"
-  val dataSource             = "defaultDataSource"
-  val interval               = Interval.parse("2010/2020")
-  val dataFiles              = Seq("file:/someFile")
-  val parseSpec              = new DelimitedParseSpec(
+  val objectMapper                             = injector.getInstance(classOf[ObjectMapper])
+  val taskId                                   = "taskId"
+  val dataSource                               = "defaultDataSource"
+  val interval                                 = Interval.parse("1992/1999")
+  val dataFiles                                = Seq("file:/someFile")
+  val parseSpec                                = new DelimitedParseSpec(
     new TimestampSpec("l_shipdate", "yyyy-MM-dd", null),
     new DimensionsSpec(
       seqAsJavaList(
@@ -98,362 +111,137 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
       )
     )
   )
-  val outPath                = "file:/tmp/foo"
-  val rowsPerPartition: Long = 8139L
-  val rowsPerFlush    : Int  = 389
-  val aggFactories           = Seq(
+  val outPath                                  = "file:/tmp/foo"
+  val rowsPerPartition: Long                   = 8139L
+  val rowsPerFlush    : Int                    = 389
+  val aggFactories    : Seq[AggregatorFactory] = Seq(
     new CountAggregatorFactory("count"),
     new LongSumAggregatorFactory("L_QUANTITY_longSum", "l_quantity"),
     new DoubleSumAggregatorFactory("L_EXTENDEDPRICE_doubleSum", "l_extendedprice"),
     new DoubleSumAggregatorFactory("L_DISCOUNT_doubleSum", "l_discount"),
     new DoubleSumAggregatorFactory("L_TAX_doubleSum", "l_tax")
   )
-  val properties             = Seq(
-    ("user.timezone", "UTC"),
-    ("file.encoding", "UTF-8"),
-    ("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager"),
-    ("org.jboss.logging.provider", "log4j2"),
-    ("druid.processing.columnCache.sizeBytes", "1000000000"),
-    ("some.property", "someValue")
-  ).foldLeft(new Properties())(
-    (p, e) => {
-      p.setProperty(e._1, e._2)
-      p
-    }
+  val properties                               = {
+    val prop = new Properties()
+    prop.putAll(
+      Map(
+        ("user.timezone", "UTC"),
+        ("file.encoding", "UTF-8"),
+        ("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager"),
+        ("org.jboss.logging.provider", "log4j2"),
+        ("druid.processing.columnCache.sizeBytes", "1000000000"),
+        ("some.property", "someValue")
+      )
+    )
+    prop
+  }
+  val master                                   = "local[999]"
+
+  val granSpec   = new UniformGranularitySpec(Granularity.YEAR, QueryGranularity.ALL, Seq(interval))
+  val dataSchema = buildDataSchema()
+  val indexSpec  = new IndexSpec()
+
+  def buildDataSchema(
+    dataSource: String = dataSource,
+    parseSpec: ParseSpec = parseSpec,
+    aggFactories: Seq[AggregatorFactory] = aggFactories,
+    granSpec: GranularitySpec = granSpec,
+    mapper: ObjectMapper = objectMapper
+    ) = new DataSchema(
+    dataSource,
+    objectMapper
+      .convertValue(new StringInputRowParser(parseSpec, null), new TypeReference[java.util.Map[String, Any]]() {}),
+    aggFactories.toArray,
+    granSpec,
+    mapper
   )
-  val master                 = "local[999]"
-  val queryGranularity       = QueryGranularity.ALL
+
+  def buildSparkBatchIndexTask(
+    id: String = taskId,
+    dataSchema: DataSchema = dataSchema,
+    interval: Interval = interval,
+    dataFiles: Seq[String] = dataFiles,
+    outPathString: String = outPath,
+    rowsPerPartition: Long = rowsPerPartition,
+    rowsPerPersist: Int = rowsPerFlush,
+    properties: Properties = properties,
+    master: String = master,
+    context: Map[String, Object] = Map(),
+    indexSpec: IndexSpec = indexSpec
+    ): SparkBatchIndexTask = new SparkBatchIndexTask(
+    id,
+    dataSchema,
+    interval,
+    dataFiles,
+    outPathString,
+    rowsPerPartition,
+    rowsPerPersist,
+    properties,
+    master,
+    context,
+    indexSpec
+  )
+}
+
+class TestScalaBatchIndexTask extends FlatSpec with Matchers
+{
+
+  import TestScalaBatchIndexTask._
 
   "The ScalaBatchIndexTask" should "properly SerDe a full object" in {
-
-    val taskPre = new SparkBatchIndexTask(
-      taskId,
-      dataSource,
-      interval,
-      dataFiles,
-      parseSpec,
-      outPath,
-      aggFactories,
-      rowsPerPartition,
-      rowsPerFlush,
-      properties,
-      master,
-      queryGranularity
-    )
+    val taskPre = buildSparkBatchIndexTask()
     val taskPost = objectMapper.readValue(objectMapper.writeValueAsString(taskPre), classOf[SparkBatchIndexTask])
-    assert(taskPre.equals(taskPost))
+    taskPre should equal(taskPost)
   }
 
   "The SparkBatchIndexTask" should "properly deserialize" in {
-    val str = "{\n\t\"type\":\"index_spark\",\n\t\"dataSource\":\"tpchSpark\",\n\t\"interval\":\"1990-01-01T00:00:00.000Z/2000-01-01T00:00:00.000Z\",\n\t\"dataFiles\":[\"s3n://metamx-user-scratch/charlesallen/tpch/lineitem.tbl\"],\n\t\"outputPath\":\"s3n://metamx-user-scratch/charlesallen/tpch/data\",\n\t\"queryGranularity\":\"DAY\",\n\t\"parseSpec\" : {\n            \"columns\" : [\n              \"l_orderkey\",\n              \"l_partkey\",\n              \"l_suppkey\",\n              \"l_linenumber\",\n              \"l_quantity\",\n              \"l_extendedprice\",\n              \"l_discount\",\n              \"l_tax\",\n              \"l_returnflag\",\n              \"l_linestatus\",\n              \"l_shipdate\",\n              \"l_commitdate\",\n              \"l_receiptdate\",\n              \"l_shipinstruct\",\n              \"l_shipmode\",\n              \"l_comment\"\n            ],\n            \"delimiter\" : \"|\",\n            \"dimensionsSpec\" : {\n              \"dimensionExclusions\" : [\n                  \"l_shipdate\",\n                  \"l_tax\",\n                  \"count\",\n                  \"l_quantity\",\n                  \"l_discount\",\n                  \"l_extendedprice\"\n              ],\n              \"dimensions\" : [\n                  \"l_orderkey\",\n                  \"l_suppkey\",\n                  \"l_linenumber\",\n                  \"l_returnflag\",\n                  \"l_linestatus\",\n                  \"l_commitdate\",\n                  \"l_receiptdate\",\n                  \"l_shipinstruct\",\n                  \"l_shipmode\",\n                  \"l_comment\"\n              ]\n            },\n            \"format\" : \"tsv\",\n            \"timestampSpec\" : {\n              \"column\" : \"l_shipdate\",\n              \"format\" : \"yyyy-MM-dd\"\n            }\n\t},\n\t\"metrics\" : [\n        {\n            \"name\" : \"COUNT\",\n            \"type\" : \"count\"\n        },\n        {\n            \"fieldName\" : \"l_quantity\",\n            \"name\" : \"L_QUANTITY_longSum\",\n            \"type\" : \"longSum\"\n        },\n        {\n            \"fieldName\" : \"l_extendedprice\",\n            \"name\" : \"L_EXTENDEDPRICE_doubleSum\",\n            \"type\" : \"doubleSum\"\n        },\n        {\n            \"fieldName\" : \"l_discount\",\n            \"name\" : \"L_DISCOUNT_doubleSum\",\n            \"type\" : \"doubleSum\"\n        },\n        {\n            \"fieldName\" : \"l_tax\",\n            \"name\" : \"L_TAX_doubleSum\",\n            \"type\" : \"doubleSum\"\n        },\n        {\n            \"fieldName\":\"l_comment\",\n            \"name\" : \"L_COMMENT_HLL\",\n            \"type\" : \"hyperUnique\"\n        },\n        {\n            \"fieldName\":\"l_orderkey\",\n            \"name\" : \"L_ORDERKEY_HLL\",\n            \"type\" : \"hyperUnique\"\n        }\n      ],\n      \"master\":\"spark://spark-master-backfill-0.metamx-prod.com:7077\",\n      \"rowsPerPartition\":1000000\n}"
+    val taskPre = buildSparkBatchIndexTask()
+    val str = "{\"type\":\"index_spark\",\"id\":\"taskId\",\"dataSchema\":{\"dataSource\":\"defaultDataSource\",\"parser\":{\"type\":\"string\",\"parseSpec\":{\"format\":\"tsv\",\"timestampSpec\":{\"column\":\"l_shipdate\",\"format\":\"yyyy-MM-dd\",\"missingValue\":null},\"dimensionsSpec\":{\"dimensions\":[\"l_comment\",\"l_commitdate\",\"l_linenumber\",\"l_linestatus\",\"l_orderkey\",\"l_receiptdate\",\"l_returnflag\",\"l_shipinstruct\",\"l_shipmode\",\"l_suppkey\"],\"dimensionExclusions\":[\"l_tax\",\"l_quantity\",\"count\",\"l_extendedprice\",\"l_shipdate\",\"l_discount\"],\"spatialDimensions\":[]},\"delimiter\":\"|\",\"listDelimiter\":\",\",\"columns\":[\"l_orderkey\",\"l_partkey\",\"l_suppkey\",\"l_linenumber\",\"l_quantity\",\"l_extendedprice\",\"l_discount\",\"l_tax\",\"l_returnflag\",\"l_linestatus\",\"l_shipdate\",\"l_commitdate\",\"l_receiptdate\",\"l_shipinstruct\",\"l_shipmode\",\"l_comment\"]},\"encoding\":\"UTF-8\"},\"metricsSpec\":[{\"type\":\"count\",\"name\":\"count\"},{\"type\":\"longSum\",\"name\":\"L_QUANTITY_longSum\",\"fieldName\":\"l_quantity\"},{\"type\":\"doubleSum\",\"name\":\"L_EXTENDEDPRICE_doubleSum\",\"fieldName\":\"l_extendedprice\"},{\"type\":\"doubleSum\",\"name\":\"L_DISCOUNT_doubleSum\",\"fieldName\":\"l_discount\"},{\"type\":\"doubleSum\",\"name\":\"L_TAX_doubleSum\",\"fieldName\":\"l_tax\"}],\"granularitySpec\":{\"type\":\"uniform\",\"segmentGranularity\":\"YEAR\",\"queryGranularity\":{\"type\":\"all\"},\"intervals\":[\"1992-01-01T00:00:00.000-08:00/1999-01-01T00:00:00.000-08:00\"]}},\"interval\":\"1992-01-01T00:00:00.000-08:00/1999-01-01T00:00:00.000-08:00\",\"dataFiles\":[\"file:/someFile\"],\"outputPath\":\"file:/tmp/foo\",\"rowsPerPartition\":8139,\"rowsFlushBoundary\":389,\"properties\":{\"some.property\":\"someValue\",\"java.util.logging.manager\":\"org.apache.logging.log4j.jul.LogManager\",\"user.timezone\":\"UTC\",\"org.jboss.logging.provider\":\"log4j2\",\"file.encoding\":\"UTF-8\",\"druid.processing.columnCache.sizeBytes\":\"1000000000\"},\"master\":\"local[999]\",\"context\":{},\"indexSpec\":{\"bitmap\":{\"type\":\"concise\"},\"dimensionCompression\":null,\"metricCompression\":null},\"groupId\":\"taskId\",\"dataSource\":\"defaultDataSource\",\"resource\":{\"availabilityGroup\":\"taskId\",\"requiredCapacity\":1}}"
     val task = objectMapper.readValue(str, classOf[Task])
-    assert(task.getContext.isEmpty)
+    task.getContext shouldBe 'Empty
     assertResult(SparkBatchIndexTask.TASK_TYPE)(task.getType)
+    taskPre should ===(task)
   }
 
   "The SparkBatchIndexTask" should "be equal for equal tasks" in {
-    val task1 = new SparkBatchIndexTask(
-      taskId,
-      dataSource,
-      interval,
-      dataFiles,
-      parseSpec,
-      outPath,
-      aggFactories,
-      rowsPerPartition,
-      rowsPerFlush,
-      properties,
-      master,
-      queryGranularity
-    )
-    val task2 = new SparkBatchIndexTask(
-      taskId,
-      dataSource,
-      interval,
-      dataFiles,
-      parseSpec,
-      outPath,
-      aggFactories,
-      rowsPerPartition,
-      rowsPerFlush,
-      properties,
-      master,
-      queryGranularity
-    )
-    assert(task1.equals(task2))
-    assert(task2.equals(task1))
+    val task1 = buildSparkBatchIndexTask()
+    val task2 = buildSparkBatchIndexTask()
+    task1 should equal(task2)
+    task2 should equal(task1)
 
-    assert(
-      task1.equals(
-        new SparkBatchIndexTask(
-          taskId,
-          dataSource,
-          interval,
-          dataFiles,
-          parseSpec,
-          outPath,
-          aggFactories,
-          rowsPerPartition,
-          rowsPerFlush,
-          properties,
-          master,
-          queryGranularity,
-          Map[String, Object]()
-        )
-      )
+    task1 should equal(
+      buildSparkBatchIndexTask(context = Map())
     )
 
-    assert(
-      task1.equals(
-        new SparkBatchIndexTask(
-          taskId,
-          dataSource,
-          interval,
-          dataFiles,
-          parseSpec,
-          outPath,
-          aggFactories,
-          rowsPerPartition,
-          rowsPerFlush,
-          properties,
-          master,
-          queryGranularity,
-          Map[String, Object](),
-          new IndexSpec()
-        )
-      )
+    task1 should equal(
+      buildSparkBatchIndexTask(indexSpec = new IndexSpec())
     )
   }
 
   "The ScalaBatchIndexTask" should "not be equal for dissimilar tasks" in {
-    val task1 = new SparkBatchIndexTask(
-      taskId,
-      dataSource,
-      interval,
-      dataFiles,
-      parseSpec,
-      outPath,
-      aggFactories,
-      rowsPerPartition,
-      rowsPerFlush,
-      properties,
-      master,
-      queryGranularity
-    )
-    assert(
-      !task1.equals(
-        new SparkBatchIndexTask(
-          taskId + "something else",
-          dataSource,
-          interval,
-          dataFiles,
-          parseSpec,
-          outPath,
-          aggFactories,
-          rowsPerPartition,
-          rowsPerFlush,
-          properties,
-          master,
-          queryGranularity
-        )
-      )
-    )
+    val task1 = buildSparkBatchIndexTask()
+    task1 should not equal buildSparkBatchIndexTask(id = taskId + "something else")
 
-    assert(
-      !task1.equals(
-        new SparkBatchIndexTask(
-          taskId,
-          dataSource + "something else",
-          interval,
-          dataFiles,
-          parseSpec,
-          outPath,
-          aggFactories,
-          rowsPerPartition,
-          rowsPerFlush,
-          properties,
-          master,
-          queryGranularity
-        )
-      )
-    )
+    task1 should not equal
+      buildSparkBatchIndexTask(dataSchema = buildDataSchema(dataSource = dataSource + "something else"))
 
-    assert(
-      !task1.equals(
-        new SparkBatchIndexTask(
-          taskId,
-          dataSource,
-          interval,
-          dataFiles ++ List("something else"),
-          parseSpec,
-          outPath,
-          aggFactories,
-          rowsPerPartition,
-          rowsPerFlush,
-          properties,
-          master,
-          queryGranularity
-        )
-      )
-    )
+    task1 should not equal buildSparkBatchIndexTask(dataFiles = dataFiles ++ List("something else"))
 
-    assert(
-      !task1.equals(
-        new SparkBatchIndexTask(
-          taskId,
-          dataSource,
-          interval,
-          dataFiles,
-          parseSpec,
-          outPath,
-          aggFactories,
-          rowsPerPartition + 1,
-          rowsPerFlush,
-          properties,
-          master,
-          queryGranularity
-        )
-      )
-    )
+    task1 should not equal buildSparkBatchIndexTask(rowsPerPartition = rowsPerPartition + 1)
 
 
-    assert(
-      !task1.equals(
-        new SparkBatchIndexTask(
-          taskId,
-          dataSource,
-          interval,
-          dataFiles,
-          parseSpec,
-          outPath,
-          aggFactories,
-          rowsPerPartition,
-          rowsPerFlush + 1,
-          properties,
-          master,
-          queryGranularity
-        )
-      )
-    )
+    task1 should not equal buildSparkBatchIndexTask(rowsPerPersist = rowsPerFlush + 1)
 
-
-    assert(
-      !task1.equals(
-        new SparkBatchIndexTask(
-          taskId,
-          dataSource,
-          interval,
-          dataFiles,
-          parseSpec,
-          outPath,
-          aggFactories,
-          rowsPerPartition,
-          rowsPerFlush,
-          properties,
-          master + "something else",
-          queryGranularity
-        )
-      )
-    )
-
-    assert(
-      !task1.equals(
-        new SparkBatchIndexTask(
-          taskId,
-          dataSource,
-          interval,
-          dataFiles,
-          parseSpec,
-          outPath,
-          aggFactories ++ List(new CountAggregatorFactory("foo")),
-          rowsPerPartition,
-          rowsPerFlush,
-          properties,
-          master,
-          queryGranularity
-        )
-      )
-    )
+    task1 should not equal buildSparkBatchIndexTask(master = master + "something else")
 
     val notSameProperties = new Properties(properties)
     notSameProperties.setProperty("Something not present", "some value")
-    assert(
-      !task1.equals(
-        new SparkBatchIndexTask(
-          taskId,
-          dataSource,
-          interval,
-          dataFiles,
-          parseSpec,
-          outPath,
-          aggFactories,
-          rowsPerPartition,
-          rowsPerFlush,
-          notSameProperties,
-          master,
-          queryGranularity
-        )
-      )
-    )
+    task1 should not equal buildSparkBatchIndexTask(properties = notSameProperties)
 
-    assert(
-      !task1.equals(
-        new SparkBatchIndexTask(
-          taskId,
-          dataSource,
-          interval,
-          dataFiles,
-          parseSpec,
-          outPath,
-          aggFactories ++ List(new CountAggregatorFactory("foo")),
-          rowsPerPartition,
-          rowsPerFlush,
-          properties,
-          master,
-          QueryGranularity.MINUTE
-        )
-      )
-    )
+    task1 should
+      not equal
+      buildSparkBatchIndexTask(indexSpec = new IndexSpec(new RoaringBitmapSerdeFactory(), "lzf", "lzf"))
 
-    assert(
-      !task1.equals(
-        new SparkBatchIndexTask(
-          taskId,
-          dataSource,
-          interval,
-          dataFiles,
-          parseSpec,
-          outPath,
-          aggFactories,
-          rowsPerPartition,
-          rowsPerFlush,
-          properties,
-          master,
-          queryGranularity,
-          Map[String, Object](),
-          new IndexSpec(new RoaringBitmapSerdeFactory(), "lzf", "lzf")
-        )
-      )
-    )
-
-    assert(
-      !task1.equals(
-        new SparkBatchIndexTask(
-          taskId,
-          dataSource,
-          interval,
-          dataFiles,
-          parseSpec,
-          outPath,
-          aggFactories,
-          rowsPerPartition,
-          rowsPerFlush,
-          properties,
-          master,
-          queryGranularity,
-          Map[String, Object]("test" -> "oops")
-        )
-      )
-    )
+    task1 should not equal buildSparkBatchIndexTask(context = Map[String, Object]("test" -> "oops"))
   }
 }

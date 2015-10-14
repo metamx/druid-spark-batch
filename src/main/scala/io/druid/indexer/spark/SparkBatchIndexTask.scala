@@ -26,7 +26,7 @@ import java.util.{Objects, Properties}
 
 import com.fasterxml.jackson.annotation.{JsonCreator, JsonProperty}
 import com.google.common.base.{Preconditions, Strings}
-import com.google.common.collect.{ImmutableMap, Iterables}
+import com.google.common.collect.Iterables
 import com.google.inject.Injector
 import com.metamx.common.logger.Logger
 import io.druid.data.input.impl.ParseSpec
@@ -38,6 +38,7 @@ import io.druid.indexing.common.{TaskLock, TaskStatus, TaskToolbox}
 import io.druid.initialization.Initialization
 import io.druid.query.aggregation.AggregatorFactory
 import io.druid.segment.IndexSpec
+import io.druid.segment.indexing.DataSchema
 import io.druid.timeline.DataSegment
 import io.tesla.aether.internal.DefaultTeslaAether
 import org.apache.spark.{SparkConf, SparkContext}
@@ -49,18 +50,14 @@ import scala.collection.JavaConversions._
 class SparkBatchIndexTask(
   @JsonProperty("id")
   id: String,
-  @JsonProperty("dataSource")
-  dataSource: String,
+  @JsonProperty("dataSchema")
+  dataSchema: DataSchema,
   @JsonProperty("interval")
   interval: Interval,
   @JsonProperty("dataFiles")
   dataFiles: util.List[String],
-  @JsonProperty("parseSpec")
-  parseSpec: ParseSpec,
   @JsonProperty("outputPath")
   outPathString: String,
-  @JsonProperty("metrics")
-  aggregatorFactories: java.util.List[AggregatorFactory] = List(),
   @JsonProperty("rowsPerPartition")
   rowsPerPartition: Long = 5000000,
   @JsonProperty("rowsFlushBoundary")
@@ -82,8 +79,6 @@ class SparkBatchIndexTask(
   ),
   @JsonProperty("master")
   master: String = "local[1]",
-  @JsonProperty("queryGranularity")
-  queryGranularity: QueryGranularity,
   @JsonProperty("context")
   context: util.Map[String, Object] = Map[String, Object](),
   @JsonProperty("indexSpec")
@@ -91,13 +86,14 @@ class SparkBatchIndexTask(
   ) extends AbstractTask(
   if (id == null) {
     AbstractTask
-      .makeId(null, SparkBatchIndexTask.TASK_TYPE, dataSource, interval)
+      .makeId(null, SparkBatchIndexTask.TASK_TYPE, dataSchema.getDataSource, interval)
   }
   else {
     id
-  }, dataSource,
+  },
+  dataSchema.getDataSource,
   if (context == null) {
-    ImmutableMap.of()
+    Map[String, String]()
   }
   else {
     context
@@ -131,10 +127,10 @@ class SparkBatchIndexTask(
       rowsPerPartition
     }
   val aggregatorFactories_ : java.util.List[AggregatorFactory] =
-    if (aggregatorFactories == null) {
+    if (dataSchema.getAggregators == null) {
       List()
     } else {
-      aggregatorFactories
+      dataSchema.getAggregators.toList
     }
   val rowsPerPersist_      : Int                               =
     if (rowsPerPersist == 0) {
@@ -167,11 +163,12 @@ class SparkBatchIndexTask(
 
       Preconditions.checkNotNull(dataFiles, "%s", "dataFiles")
       Preconditions.checkArgument(!dataFiles.isEmpty, "%s", "empty dataFiles")
-      Preconditions.checkNotNull(Strings.emptyToNull(dataSource), "%s", "dataSource")
-      Preconditions.checkNotNull(parseSpec, "%s", "parseSpec")
+      Preconditions.checkNotNull(Strings.emptyToNull(dataSchema.getDataSource), "%s", "dataSource")
+      Preconditions.checkNotNull(dataSchema.getParserMap, "%s", "parseSpec")
       Preconditions.checkNotNull(interval, "%s", "interval")
       Preconditions.checkNotNull(Strings.emptyToNull(outPathString), "%s", "outputPath")
-      Preconditions.checkNotNull(queryGranularity, "%s", "queryGranularity")
+      Preconditions.checkNotNull(dataSchema.getGranularitySpec.getQueryGranularity, "%s", "queryGranularity")
+      Preconditions.checkNotNull(dataSchema.getGranularitySpec.getSegmentGranularity, "%s", "segmentGranularity")
       log.debug("Sending task `%s`", SerializedJsonStatic.mapper.writeValueAsString(this))
 
 
@@ -261,14 +258,11 @@ class SparkBatchIndexTask(
 
       val dataSegments = SparkDruidIndexer.loadData(
         dataFiles,
-        dataSource,
-        new SerializedJson[ParseSpec](parseSpec),
+        new SerializedJson[DataSchema](dataSchema),
         interval,
-        getAggregatorFactories,
         getRowsPerPartition,
-        getRowsPerPersist,
+        getRowFlushBoundary,
         outPathString,
-        getQueryGranularity,
         getIndexSpec,
         sc
       ).map(_.withVersion(version))
@@ -303,49 +297,15 @@ class SparkBatchIndexTask(
       return false
     }
     val other = o.asInstanceOf[SparkBatchIndexTask]
-    this.getAggregatorFactories.equals(other.getAggregatorFactories) &&
-      Objects.equals(getDataFile, other.getDataFile) &&
-      Objects.equals(getFormattedDataSource, other.getFormattedDataSource) &&
-      Objects.equals(getFormattedId, other.getFormattedId) &&
-      Objects.equals(getMaster, other.getMaster) &&
+    Objects.equals(getId, other.getId) &&
+      Objects.equals(getDataSchema, other.getDataSchema) &&
+      Objects.equals(getInterval, other.getInterval) &&
+      Objects.equals(getDataFiles, other.getDataFiles) &&
       Objects.equals(getOutputPath, other.getOutputPath) &&
-      Objects.equals(getProperties, other.getProperties) &&
       Objects.equals(getRowsPerPartition, other.getRowsPerPartition) &&
-      Objects.equals(getRowsPerPersist, other.getRowsPerPersist) &&
-      Objects.equals(getTotalInterval, other.getTotalInterval) &&
-      Objects.equals(
-        getParseSpec
-          .getDimensionsSpec
-          .getDimensionExclusions,
-        other.getParseSpec.getDimensionsSpec.getDimensionExclusions
-      ) &&
-      Objects.equals(
-        getParseSpec.getDimensionsSpec.getDimensions,
-        other.getParseSpec.getDimensionsSpec.getDimensions
-      ) &&
-      Objects.equals(
-        getParseSpec
-          .getDimensionsSpec
-          .getSpatialDimensions,
-        other.getParseSpec.getDimensionsSpec.getSpatialDimensions
-      ) &&
-      Objects.equals(
-        parseSpec.getTimestampSpec.getMissingValue,
-        other.getParseSpec.getTimestampSpec.getMissingValue
-      ) &&
-      Objects.equals(
-        parseSpec
-          .getTimestampSpec
-          .getTimestampColumn,
-        other.getParseSpec.getTimestampSpec.getTimestampColumn
-      ) &&
-      Objects.equals(
-        getParseSpec
-          .getTimestampSpec
-          .getTimestampFormat,
-        other.getParseSpec.getTimestampSpec.getTimestampFormat
-      ) &&
-      Objects.equals(getQueryGranularity, other.getQueryGranularity) &&
+      Objects.equals(getRowFlushBoundary, other.getRowFlushBoundary) &&
+      Objects.equals(getProperties, other.getProperties) &&
+      Objects.equals(getMaster, other.getMaster) &&
       Objects.equals(getContext, other.getContext) &&
       Objects.equals(getIndexSpec, other.getIndexSpec)
   }
@@ -356,22 +316,16 @@ class SparkBatchIndexTask(
     .isPresent
 
   @JsonProperty("id")
-  def getFormattedId = getId
+  override def getId = super.getId
 
-  @JsonProperty("dataSource")
-  def getFormattedDataSource = getDataSource
+  @JsonProperty("dataSchema")
+  def getDataSchema = dataSchema
 
   @JsonProperty("interval")
-  def getTotalInterval = interval
+  def getInterval = interval
 
   @JsonProperty("dataFiles")
-  def getDataFile = dataFiles
-
-  @JsonProperty("parseSpec")
-  def getParseSpec = parseSpec
-
-  @JsonProperty("metrics")
-  def getAggregatorFactories = aggregatorFactories_
+  def getDataFiles = dataFiles
 
   @JsonProperty("outputPath")
   def getOutputPath = outPathString
@@ -380,7 +334,7 @@ class SparkBatchIndexTask(
   def getRowsPerPartition = rowsPerPartition_
 
   @JsonProperty("rowsFlushBoundary")
-  def getRowsPerPersist = rowsPerPersist_
+  def getRowFlushBoundary = rowsPerPersist_
 
   @JsonProperty("properties")
   def getProperties = properties_
@@ -388,14 +342,13 @@ class SparkBatchIndexTask(
   @JsonProperty("master")
   def getMaster = master_
 
-  @JsonProperty("queryGranularity")
-  def getQueryGranularity = queryGranularity
-
   @JsonProperty("context")
   override def getContext = super.getContext
 
   @JsonProperty("indexSpec")
   def getIndexSpec = indexSpec_
+
+  override def toString = s"SparkBatchIndexTask($getType, $getId, $getDataSchema, $getInterval, $getDataFiles, $getOutputPath, $getRowsPerPartition, $getRowFlushBoundary, $getProperties, $getMaster, $getContext, $getIndexSpec)"
 }
 
 object SparkBatchIndexTask
@@ -407,7 +360,8 @@ object SparkBatchIndexTask
     classOf[SerializedJson[QueryGranularity]],
     classOf[SerializedJson[AggregatorFactory]],
     classOf[SerializedJson[ParseSpec]],
-    classOf[SerializedJson[IndexSpec]]
+    classOf[SerializedJson[IndexSpec]],
+    classOf[SerializedJson[DataSchema]]
   ).asInstanceOf[Array[Class[_]]]
   val log          = new Logger(SparkBatchIndexTask.getClass)
   val TASK_TYPE    = "index_spark"
