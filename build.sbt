@@ -3,9 +3,9 @@ name := "druid-spark-batch"
 
 isSnapshot:=true
 
-version := "0.17-SNAPSHOT"
+version := "0.18-SNAPSHOT"
 
-scalaVersion := "2.10.5"
+scalaVersion := "2.11.7"
 
 libraryDependencies += "org.apache.spark" %% "spark-core" % "1.5.1"
 libraryDependencies += "org.spark-project.akka" %% "akka-actor" % "2.3.4-spark"

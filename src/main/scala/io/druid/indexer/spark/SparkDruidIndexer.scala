@@ -154,6 +154,9 @@ object SparkDruidIndexer
           }
           val partitionNum = partitionNums.head
           val timeBucket = hashToPartitionMap.filter(_._2 == index).map(_._1._1).head
+          val timeInterval = dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity.getIterable(ingestInterval)
+            .toSeq.filter(_.getStart.getMillis == timeBucket).head
+          log.info("Creating index [%s] for date range [%s]" format(partitionNum, timeInterval))
           val partitionCount = hashToPartitionMap.count(_._1._1 == timeBucket)
 
           val parser: InputRowParser[_] = SerializedJsonStatic.mapper
@@ -257,7 +260,7 @@ object SparkDruidIndexer
             val dataSegment = JobHelper.serializeOutIndex(
               new DataSegment(
                 dataSource,
-                ingestInterval,
+                timeInterval,
                 dataSegmentVersion,
                 null,
                 dimensions,
@@ -278,7 +281,7 @@ object SparkDruidIndexer
                 hadoopFs,
                 dataSource,
                 dataSegmentVersion,
-                ingestInterval,
+                timeInterval,
                 index
               )
             )
@@ -493,7 +496,7 @@ class DateBucketAndHashPartitioner(gran: Granularity, interval: Interval, partMa
   override def numPartitions: Int = partMap.size
 
   override def getPartition(key: Any): Int = key match {
-    case (k: Long, v: Set[(String, Set[String]) @unchecked]) =>
+    case (k: Long, v: Set[(String, Set[String])@unchecked]) =>
       val dateBucket = gran.truncate(new DateTime(k)).getMillis
       val modSize = maxTimePerBucket
         .getOrElse(
