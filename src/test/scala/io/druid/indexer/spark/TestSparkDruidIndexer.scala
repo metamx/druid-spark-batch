@@ -19,12 +19,13 @@
 
 package io.druid.indexer.spark
 
-import java.io.Closeable
+import java.io.{Closeable, File}
 import java.nio.file.Files
 
 import com.google.common.io.Closer
 import com.metamx.common.logger.Logger
-import com.metamx.common.{Granularity, IAE}
+import com.metamx.common.{CompressionUtils, Granularity, IAE}
+import io.druid.segment.{IndexIO, QueryableIndexIndexableAdapter}
 import org.apache.commons.io.FileUtils
 import org.apache.spark.{SparkConf, SparkContext}
 import org.joda.time.{DateTime, Interval}
@@ -82,9 +83,41 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         sc
       )
       loadResults.length should be(7)
-      val dataSegment = loadResults.head
-      dataSegment.getBinaryVersion should be(9)
-      dataSource should equal(dataSegment.getDataSource)
+      for (
+        segment <- loadResults
+      ) {
+        segment.getBinaryVersion should be(9)
+        segment.getDataSource should equal(dataSource)
+        interval.contains(segment.getInterval) should be(true)
+        segment.getInterval.contains(interval) should be(false)
+        segment.getSize should be > 0L
+        segment.getDimensions should equal(dataSchema.getParser.getParseSpec.getDimensionsSpec.getDimensions)
+        segment.getMetrics.asScala.toList should equal(dataSchema.getAggregators.map(_.getName).toList)
+        val file = new File(segment.getLoadSpec.get("path").toString)
+        file.exists() should be(true)
+        val segDir = Files.createTempDirectory(outDir.toPath, "loadableSegment-%s" format segment.getIdentifier).toFile
+        val copyResult = CompressionUtils.unzip(file, segDir)
+        copyResult.size should be > 0L
+        copyResult.getFiles.asScala.map(_.getName).toSet should equal(Set("00000.smoosh", "meta.smoosh", "version.bin"))
+        val index = IndexIO.loadIndex(segDir)
+        try {
+          val qindex = new QueryableIndexIndexableAdapter(index)
+          qindex.getDimensionNames.asScala.toList should
+            equal(dataSchema.getParser.getParseSpec.getDimensionsSpec.getDimensions.asScala.toList)
+          for (dimension <- qindex.getDimensionNames.iterator().asScala) {
+            val dimVal = qindex.getDimValueLookup(dimension).asScala
+            dimVal should not be 'Empty
+            for (dv <- dimVal) {
+              dv should not startWith "List("
+              dv should not startWith "Set("
+            }
+          }
+          qindex.getNumRows should be > 0
+        }
+        finally {
+          index.close()
+        }
+      }
     }
     finally {
       closer.close()
@@ -145,12 +178,12 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
     partitioner.getPartition(makeEvent(interval.getStart)) should equal(0)
     partitioner.getPartition(makeEvent(interval.getEnd.minus(10L))) should equal(1)
     partitioner.getPartition(makeEvent(interval.getEnd.minus(10L), "something else")) should equal(2)
-    partitioner.getPartition(makeEvent(interval.getEnd.minus(10L), "anotherHash3")) should equal(1)
-    partitioner.getPartition(makeEvent(interval.getEnd.minus(10L), "anotherHash")) should equal(2)
+    partitioner.getPartition(makeEvent(interval.getEnd.minus(10L), "anotherHash3")) should equal(2)
+    partitioner.getPartition(makeEvent(interval.getEnd.minus(10L), "anotherHash")) should equal(1)
   }
 
-  def makeEvent(d: DateTime, v: String = "dim11"): (Long, Set[(String, Set[String])]) = {
-    (d.getMillis, Set(("dim1", Set(v))))
+  def makeEvent(d: DateTime, v: String = "dim11"): (Long, Seq[(String, List[String])]) = {
+    (d.getMillis, List(("dim1", List(v))))
   }
 
   "getSizedPartitionMap" should "partition data correctly for single items" in {

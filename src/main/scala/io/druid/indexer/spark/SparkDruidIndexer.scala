@@ -44,7 +44,7 @@ import io.druid.segment.indexing.DataSchema
 import io.druid.segment.loading.DataSegmentPusher
 import io.druid.server.DruidNode
 import io.druid.timeline.DataSegment
-import io.druid.timeline.partition.NumberedShardSpec
+import io.druid.timeline.partition.{NoneShardSpec, NumberedShardSpec}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -55,6 +55,7 @@ import org.apache.spark.{Partitioner, SparkContext}
 import org.joda.time.{DateTime, Interval}
 
 import scala.collection.JavaConversions._
+import scala.collection.JavaConverters._
 
 object SparkDruidIndexer
 {
@@ -164,7 +165,17 @@ object SparkDruidIndexer
           val dimensions = parser.getParseSpec.getDimensionsSpec.getDimensions
 
           val rows = it
-            .map(r => new MapBasedInputRow(r._1._1, dimensions, r._1._2.toMap))
+            .map(
+              r => new MapBasedInputRow(
+                r._1._1, dimensions, r._1._2.toMap.map(
+                  e => (e._1, if (e._2.length == 1) {
+                    e._2.head
+                  } else {
+                    e._2.asJava
+                  })
+                )
+              )
+            )
 
           val pusher: DataSegmentPusher = SerializedJsonStatic.injector.getInstance(classOf[DataSegmentPusher])
           val tmpPersistDir = Files.createTempDirectory("persist").toFile
@@ -204,6 +215,7 @@ object SparkDruidIndexer
                             .withDimensionsSpec(parser.getParseSpec.getDimensionsSpec)
                             .withQueryGranularity(dataSchema.getDelegate.getGranularitySpec.getQueryGranularity)
                             .withMetrics(aggs.map(_.getDelegate))
+                            .withMinTimestamp(timeBucket)
                             .build()
                           , rowsPerPersist
                         )
@@ -219,7 +231,7 @@ object SparkDruidIndexer
                     new QueryableIndexIndexableAdapter(
                       closer.register(
                         IndexIO.loadIndex(
-                          IndexMerger.persist(incIndex, tmpPersistDir, null, new IndexSpec())
+                          IndexMerger.persist(incIndex, tmpPersistDir, null, indexSpec_passable.getDelegate)
                         )
                       )
                     )
@@ -237,7 +249,7 @@ object SparkDruidIndexer
                 }
 
                 override def stopSection(s: String): Unit = {
-                  log.trace("Stop [%s]", s)
+                  if (log.isTraceEnabled) log.trace("%s", "Stop [%s]" format s)
                 }
 
                 override def progress(): Unit = {
@@ -245,11 +257,11 @@ object SparkDruidIndexer
                 }
 
                 override def startSection(s: String): Unit = {
-                  log.trace("Start [%s]", s)
+                  if (log.isTraceEnabled) log.trace("%s", "Start [%s]" format s)
                 }
 
                 override def progressSection(s: String, s1: String): Unit = {
-                  log.trace("Start [%s]:[%s]", s, s1)
+                  if (log.isTraceEnabled) log.trace("%s", "Start [%s]:[%s]" format(s, s1))
                 }
 
                 override def start(): Unit = {
@@ -265,14 +277,18 @@ object SparkDruidIndexer
                 null,
                 dimensions,
                 aggs.map(_.getDelegate.getName).toList,
-                new NumberedShardSpec(partitionNum, partitionCount),
+                if (partitionCount == 1) {
+                  new NoneShardSpec()
+                } else {
+                  new NumberedShardSpec(partitionNum, partitionCount)
+                },
                 -1,
                 -1
               ),
               hadoopConf,
               new Progressable
               {
-                override def progress(): Unit = { log.debug("Progress") }
+                override def progress(): Unit = log.debug("Progress")
               },
               new TaskAttemptID(new org.apache.hadoop.mapred.TaskID(), index),
               file,
@@ -299,10 +315,17 @@ object SparkDruidIndexer
     results.toSeq
   }
 
-  def getDimValues(r: InputRow) = {
-    collectionAsScalaIterable(r.getDimensions)
-      .toSet
-      .map((s: String) => s -> collectionAsScalaIterable(r.getDimension(s)).toSet)
+  def getDimValues(r: InputRow): Seq[(String, List[String])] = {
+    r.getDimensions.flatMap(
+      (s: String) => {
+        val dimVals = r.getDimension(s)
+        if (dimVals == null) {
+          None
+        } else {
+          Option(s -> dimVals.toList)
+        }
+      }
+    )
   }
 
   /**
@@ -496,7 +519,7 @@ class DateBucketAndHashPartitioner(gran: Granularity, interval: Interval, partMa
   override def numPartitions: Int = partMap.size
 
   override def getPartition(key: Any): Int = key match {
-    case (k: Long, v: Set[(String, Set[String])@unchecked]) =>
+    case (k: Long, v: Seq[(String, List[String])@unchecked]) =>
       val dateBucket = gran.truncate(new DateTime(k)).getMillis
       val modSize = maxTimePerBucket
         .getOrElse(
