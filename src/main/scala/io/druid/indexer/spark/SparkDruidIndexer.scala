@@ -211,7 +211,7 @@ object SparkDruidIndexer
                       )
                     )(
                       (index: OnheapIncrementalIndex, r) => {
-                        index.add(index.formatRow(new MapBasedInputRow(r._1._1, dimensions, r._1._2)))
+                        index.add(new MapBasedInputRow(r._1._1, dimensions, r._1._2))
                         index
                       }
                     )
@@ -220,7 +220,7 @@ object SparkDruidIndexer
                     new QueryableIndexIndexableAdapter(
                       closer.register(
                         IndexIO.loadIndex(
-                          IndexMerger.persist(incIndex, tmpPersistDir, null, indexSpec_passable.getDelegate)
+                          IndexMerger.persist(incIndex, timeInterval, tmpPersistDir, null, indexSpec_passable.getDelegate)
                         )
                       )
                     )

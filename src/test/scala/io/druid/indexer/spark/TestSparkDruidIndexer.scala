@@ -25,6 +25,7 @@ import java.nio.file.Files
 import com.google.common.io.Closer
 import com.metamx.common.logger.Logger
 import com.metamx.common.{CompressionUtils, Granularity, IAE}
+import io.druid.common.utils.JodaUtils
 import io.druid.segment.{IndexIO, QueryableIndexIndexableAdapter}
 import org.apache.commons.io.FileUtils
 import org.apache.spark.{SparkConf, SparkContext}
@@ -127,6 +128,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
             val column = index.getColumn(colName)
             Range.apply(0, qindex.getNumRows).map(column.getGenericColumn.getFloatSingleValueRow).sum should not be 0.0D
           }
+          index.getDataInterval.getEnd.getMillis should not be (JodaUtils.MAX_INSTANT)
         }
         finally {
           index.close()
