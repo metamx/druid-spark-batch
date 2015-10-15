@@ -31,11 +31,11 @@ import com.google.common.io.Closer
 import com.google.inject.{Binder, Key, Module}
 import com.metamx.common.logger.Logger
 import com.metamx.common.{Granularity, IAE, ISE}
-import io.druid.data.input.MapBasedInputRow
+import io.druid.data.input.{ProtoBufInputRowParser, MapBasedInputRow}
 import io.druid.data.input.impl._
 import io.druid.guice.annotations.{Self, Smile}
 import io.druid.guice.{GuiceInjectors, JsonConfigProvider}
-import io.druid.indexer.JobHelper
+import io.druid.indexer.{HadoopyStringInputRowParser, JobHelper}
 import io.druid.initialization.Initialization
 import io.druid.query.aggregation.AggregatorFactory
 import io.druid.segment._
@@ -83,9 +83,19 @@ object SparkDruidIndexer
       .union(data_file.map(sc.textFile(_)))
       .mapPartitions(
         (it) => {
-          val parser = dataSchema.getDelegate.getParser.asInstanceOf[StringInputRowParser]
-          it.map(parser.parse)
-            .filter(r => ingestInterval.contains(r.getTimestamp))
+          val i = dataSchema.getDelegate.getParser match {
+            case x: StringInputRowParser => it.map(x.parse)
+            case x: HadoopyStringInputRowParser => it.map(x.parse)
+            case x: ProtoBufInputRowParser => throw new UnsupportedOperationException("Cannot use Protobuf for text input")
+            case x =>
+              log
+                .warn(
+                  "%s",
+                  "Could not figure out how to handle class [%s]. Hoping it can handle string input" format x.getClass
+                )
+              it.map(x.asInstanceOf[InputRowParser[Any]].parse)
+          }
+          i.filter(r => ingestInterval.contains(r.getTimestamp))
             .map(
               r => {
                 val queryGran = dataSchema.getDelegate.getGranularitySpec.getQueryGranularity
@@ -201,7 +211,7 @@ object SparkDruidIndexer
                       closer.register(
                         new OnheapIncrementalIndex(
                           new IncrementalIndexSchema.Builder()
-                            .withDimensionsSpec(parser.getParseSpec.getDimensionsSpec)
+                            .withDimensionsSpec(parser)
                             .withQueryGranularity(dataSchema.getDelegate.getGranularitySpec.getQueryGranularity)
                             .withMetrics(aggs.map(_.getDelegate))
                             .withMinTimestamp(timeBucket)
@@ -220,7 +230,8 @@ object SparkDruidIndexer
                     new QueryableIndexIndexableAdapter(
                       closer.register(
                         IndexIO.loadIndex(
-                          IndexMerger.persist(incIndex, timeInterval, tmpPersistDir, null, indexSpec_passable.getDelegate)
+                          IndexMerger
+                            .persist(incIndex, timeInterval, tmpPersistDir, null, indexSpec_passable.getDelegate)
                         )
                       )
                     )
