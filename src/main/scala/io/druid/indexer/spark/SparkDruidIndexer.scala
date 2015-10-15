@@ -31,8 +31,8 @@ import com.google.common.io.Closer
 import com.google.inject.{Binder, Key, Module}
 import com.metamx.common.logger.Logger
 import com.metamx.common.{Granularity, IAE, ISE}
+import io.druid.data.input.MapBasedInputRow
 import io.druid.data.input.impl._
-import io.druid.data.input.{InputRow, MapBasedInputRow}
 import io.druid.guice.annotations.{Self, Smile}
 import io.druid.guice.{GuiceInjectors, JsonConfigProvider}
 import io.druid.indexer.JobHelper
@@ -55,7 +55,6 @@ import org.apache.spark.{Partitioner, SparkContext}
 import org.joda.time.{DateTime, Interval}
 
 import scala.collection.JavaConversions._
-import scala.collection.JavaConverters._
 
 object SparkDruidIndexer
 {
@@ -96,7 +95,7 @@ object SparkDruidIndexer
                   // Example: AllGranularity
                   k = segmentGran.truncate(new DateTime(r.getTimestampFromEpoch)).getMillis
                 }
-                k -> getDimValues(r)
+                k -> r.asInstanceOf[MapBasedInputRow].getEvent
               }
             )
         },
@@ -165,17 +164,6 @@ object SparkDruidIndexer
           val dimensions = parser.getParseSpec.getDimensionsSpec.getDimensions
 
           val rows = it
-            .map(
-              r => new MapBasedInputRow(
-                r._1._1, dimensions, r._1._2.toMap.map(
-                  e => (e._1, if (e._2.length == 1) {
-                    e._2.head
-                  } else {
-                    e._2.asJava
-                  })
-                )
-              )
-            )
 
           val pusher: DataSegmentPusher = SerializedJsonStatic.injector.getInstance(classOf[DataSegmentPusher])
           val tmpPersistDir = Files.createTempDirectory("persist").toFile
@@ -202,6 +190,7 @@ object SparkDruidIndexer
             val hadoopConf = hadoopConfig.getDelegate
             val outPath = new Path(outPathString)
             val hadoopFs = outPath.getFileSystem(hadoopConf)
+            val dimensions = dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec.getDimensions
 
             val file = IndexMerger.merge(
               seqAsJavaList(
@@ -222,7 +211,7 @@ object SparkDruidIndexer
                       )
                     )(
                       (index: OnheapIncrementalIndex, r) => {
-                        index.add(index.formatRow(r))
+                        index.add(index.formatRow(new MapBasedInputRow(r._1._1, dimensions, r._1._2)))
                         index
                       }
                     )
@@ -313,19 +302,6 @@ object SparkDruidIndexer
     val results = partitioned_data.cache().collect().map(_.getDelegate)
     log.info("Finished with %s", util.Arrays.deepToString(results.map(_.toString)))
     results.toSeq
-  }
-
-  def getDimValues(r: InputRow): Seq[(String, List[String])] = {
-    r.getDimensions.flatMap(
-      (s: String) => {
-        val dimVals = r.getDimension(s)
-        if (dimVals == null) {
-          None
-        } else {
-          Option(s -> dimVals.toList)
-        }
-      }
-    )
   }
 
   /**
@@ -504,8 +480,9 @@ class DateBucketPartitioner(gran: Granularity, interval: Interval) extends Parti
     case null => throw new NullPointerException("Bad partition key")
     case (k: Long, v: Any) => getPartition(k)
     case (k: Long) => intervalMap.getOrElse(
-      gran.bucket(new DateTime(k)),
+    gran.bucket(new DateTime(k)), {
       throw new ISE("%s", "unknown bucket for datetime %s" format k)
+    }
     )
     case x => throw new IAE("%s", "Unknown type for %s" format x)
   }
@@ -519,18 +496,20 @@ class DateBucketAndHashPartitioner(gran: Granularity, interval: Interval, partMa
   override def numPartitions: Int = partMap.size
 
   override def getPartition(key: Any): Int = key match {
-    case (k: Long, v: Seq[(String, List[String])@unchecked]) =>
+    case (k: Long, v: AnyRef) =>
       val dateBucket = gran.truncate(new DateTime(k)).getMillis
       val modSize = maxTimePerBucket
         .getOrElse(
-          dateBucket.toLong,
+        dateBucket.toLong, {
           throw new ISE("%s", "bad date bucket [%s]. available: %s" format(dateBucket, maxTimePerBucket.keySet))
+        }
         )
       val hash = Math.abs(v.hashCode()) % modSize
       partMap
         .getOrElse(
-          (dateBucket.toLong, hash.toLong),
+        (dateBucket.toLong, hash.toLong), {
           throw new ISE("bad hash and bucket combo: (%s, %s)" format(dateBucket, hash))
+        }
         )
     case x => throw new IAE("%s", "Unknown type [%s]" format x)
   }

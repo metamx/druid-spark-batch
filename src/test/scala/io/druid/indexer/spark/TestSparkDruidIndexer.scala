@@ -113,6 +113,20 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
             }
           }
           qindex.getNumRows should be > 0
+          for(colName <- Seq("count")) {
+            val column = index.getColumn(colName)
+            for (i <- Range.apply(0, qindex.getNumRows)) {
+              column.getGenericColumn.getLongSingleValueRow(i) should not be 0
+            }
+          }
+          for(colName <- Seq("L_QUANTITY_longSum")) {
+            val column = index.getColumn(colName)
+            Range.apply(0, qindex.getNumRows).map(column.getGenericColumn.getLongSingleValueRow).sum should not be 0
+          }
+          for(colName <- Seq("L_DISCOUNT_doubleSum", "L_TAX_doubleSum")) {
+            val column = index.getColumn(colName)
+            Range.apply(0, qindex.getNumRows).map(column.getGenericColumn.getFloatSingleValueRow).sum should not be 0.0D
+          }
         }
         finally {
           index.close()

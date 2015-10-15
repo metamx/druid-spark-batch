@@ -3,7 +3,7 @@ name := "druid-spark-batch"
 
 isSnapshot:=true
 
-version := "0.20-SNAPSHOT"
+version := "0.21-SNAPSHOT"
 
 scalaVersion := "2.11.7"
 
