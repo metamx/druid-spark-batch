@@ -33,8 +33,8 @@ import io.druid.data.input.impl.ParseSpec
 import io.druid.granularity.QueryGranularity
 import io.druid.guice.{ExtensionsConfig, GuiceInjectors}
 import io.druid.indexing.common.actions.{LockTryAcquireAction, TaskActionClient}
-import io.druid.indexing.common.task.AbstractTask
-import io.druid.indexing.common.{TaskLock, TaskStatus, TaskToolbox}
+import io.druid.indexing.common.task.{AbstractTask, HadoopTask}
+import io.druid.indexing.common.{TaskStatus, TaskToolbox}
 import io.druid.initialization.Initialization
 import io.druid.query.aggregation.AggregatorFactory
 import io.druid.segment.IndexSpec
@@ -82,8 +82,10 @@ class SparkBatchIndexTask(
   @JsonProperty("context")
   context: util.Map[String, Object] = Map[String, Object](),
   @JsonProperty("indexSpec")
-  indexSpec: IndexSpec = new IndexSpec()
-  ) extends AbstractTask(
+  indexSpec: IndexSpec = new IndexSpec(),
+  @JsonProperty("classpathPrefix")
+  classpathPrefix: String = null
+  ) extends HadoopTask(
   if (id == null) {
     AbstractTask
       .makeId(null, SparkBatchIndexTask.TASK_TYPE, dataSchema.getDataSource, interval)
@@ -92,6 +94,7 @@ class SparkBatchIndexTask(
     id
   },
   dataSchema.getDataSource,
+  List[String]("%s:%s_2.11:%s" format (classOf[SparkBatchIndexTask].getPackage.getImplementationVendor, classOf[SparkBatchIndexTask].getPackage.getImplementationTitle, classOf[SparkBatchIndexTask].getPackage.getImplementationVersion)),
   if (context == null) {
     Map[String, String]()
   }
@@ -100,7 +103,6 @@ class SparkBatchIndexTask(
   }
 )
 {
-  private val CHILD_PROPERTY_PREFIX: String = "druid.indexer.fork.property."
   val log                  : Logger                            = new Logger(classOf[SparkBatchIndexTask])
   val properties_          : Properties                        =
     if (properties == null) {
@@ -154,58 +156,157 @@ class SparkBatchIndexTask(
   override def getType: String = SparkBatchIndexTask.TASK_TYPE
 
   override def run(toolbox: TaskToolbox): TaskStatus = {
+    Preconditions.checkNotNull(dataFiles, "%s", "dataFiles")
+    Preconditions.checkArgument(!dataFiles.isEmpty, "%s", "empty dataFiles")
+    Preconditions.checkNotNull(Strings.emptyToNull(dataSchema.getDataSource), "%s", "dataSource")
+    Preconditions.checkNotNull(dataSchema.getParserMap, "%s", "parseSpec")
+    Preconditions.checkNotNull(interval, "%s", "interval")
+    Preconditions.checkNotNull(Strings.emptyToNull(outPathString), "%s", "outputPath")
+    Preconditions.checkNotNull(dataSchema.getGranularitySpec.getQueryGranularity, "%s", "queryGranularity")
+    Preconditions.checkNotNull(dataSchema.getGranularitySpec.getSegmentGranularity, "%s", "segmentGranularity")
 
-    var optionalSC: Option[SparkContext] = Option.empty
     var status: Option[TaskStatus] = Option.empty
-    val priorLoader = Thread.currentThread.getContextClassLoader
+
     try {
-      Thread.currentThread.setContextClassLoader(classOf[SerializedJson[ParseSpec]].getClassLoader)
+      val classLoader = buildClassLoader(toolbox)
+      val task = SerializedJsonStatic.mapper.writeValueAsString(this)
+      log.debug("Sending task `%s`", task)
 
-      Preconditions.checkNotNull(dataFiles, "%s", "dataFiles")
-      Preconditions.checkArgument(!dataFiles.isEmpty, "%s", "empty dataFiles")
-      Preconditions.checkNotNull(Strings.emptyToNull(dataSchema.getDataSource), "%s", "dataSource")
-      Preconditions.checkNotNull(dataSchema.getParserMap, "%s", "parseSpec")
-      Preconditions.checkNotNull(interval, "%s", "interval")
-      Preconditions.checkNotNull(Strings.emptyToNull(outPathString), "%s", "outputPath")
-      Preconditions.checkNotNull(dataSchema.getGranularitySpec.getQueryGranularity, "%s", "queryGranularity")
-      Preconditions.checkNotNull(dataSchema.getGranularitySpec.getSegmentGranularity, "%s", "segmentGranularity")
-      log.debug("Sending task `%s`", SerializedJsonStatic.mapper.writeValueAsString(this))
+      val result = HadoopTask.invokeForeignLoader[util.ArrayList[String], util.ArrayList[String]]("io.druid.indexer.spark.Runner", new util.ArrayList(List(task, Iterables.getOnlyElement(getTaskLocks(toolbox)).getVersion)), classLoader)
+      toolbox.pushSegments(result.map(SerializedJsonStatic.mapper.readValue(_, classOf[DataSegment])))
+      status = Option.apply(TaskStatus.success(getId))
+    }
+    catch {
+      case e: Throwable => log.error(e, "%s", "Error running task [%s]" format getId)
+    }
+    status match {
+      case Some(x) => x
+      case None => TaskStatus.failure(getId)
+    }
+  }
+
+  override def equals(o: Any): Boolean = {
+    if (!super.equals(o)) {
+      return false
+    }
+    if (o == null || this == null) {
+      return false
+    }
+    if (!o.isInstanceOf[SparkBatchIndexTask]) {
+      return false
+    }
+    val other = o.asInstanceOf[SparkBatchIndexTask]
+    Objects.equals(getId, other.getId) &&
+      Objects.equals(getDataSchema, other.getDataSchema) &&
+      Objects.equals(getInterval, other.getInterval) &&
+      Objects.equals(getDataFiles, other.getDataFiles) &&
+      Objects.equals(getOutputPath, other.getOutputPath) &&
+      Objects.equals(getRowsPerPartition, other.getRowsPerPartition) &&
+      Objects.equals(getRowFlushBoundary, other.getRowFlushBoundary) &&
+      Objects.equals(getProperties, other.getProperties) &&
+      Objects.equals(getMaster, other.getMaster) &&
+      Objects.equals(getContext, other.getContext) &&
+      Objects.equals(getIndexSpec, other.getIndexSpec) &&
+      Objects.equals(getClasspathPrefix, other.getClasspathPrefix)
+  }
+
+  @throws(classOf[Exception])
+  override def isReady(taskActionClient: TaskActionClient): Boolean = taskActionClient
+    .submit(new LockTryAcquireAction(interval))
+    .isPresent
+
+  @JsonProperty("id")
+  override def getId = super.getId
+
+  @JsonProperty("dataSchema")
+  def getDataSchema = dataSchema
+
+  @JsonProperty("interval")
+  def getInterval = interval
+
+  @JsonProperty("dataFiles")
+  def getDataFiles = dataFiles
+
+  @JsonProperty("outputPath")
+  def getOutputPath = outPathString
+
+  @JsonProperty("rowsPerPartition")
+  def getRowsPerPartition = rowsPerPartition_
+
+  @JsonProperty("rowsFlushBoundary")
+  def getRowFlushBoundary = rowsPerPersist_
+
+  @JsonProperty("properties")
+  def getProperties = properties_
+
+  @JsonProperty("master")
+  def getMaster = master_
+
+  @JsonProperty("context")
+  override def getContext = super.getContext
+
+  @JsonProperty("indexSpec")
+  def getIndexSpec = indexSpec_
 
 
-      val conf = new SparkConf()
-        .setAppName(getId)
-        .setMaster(master_)
-        // TODO: better config here
-        .set("spark.executor.memory", "6G")
-        .set("spark.executor.cores", "2")
-        .set("spark.kryo.referenceTracking", "false")
-        // registerKryoClasses already does the below two lines
-        //.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-        //.set("spark.kryo.classesToRegister", SparkBatchIndexTask.KRYO_CLASSES.map(_.getCanonicalName).mkString(","))
-        .registerKryoClasses(SparkBatchIndexTask.KRYO_CLASSES)
+  @JsonProperty("classpathPrefix")
+  override def getClasspathPrefix = classpathPrefix
 
-      System.getProperties.stringPropertyNames().filter(_.startsWith("io.druid")).foreach(
-        x => {
-          log.debug("Setting io.druid property [%s]", x)
-          conf.set(x, System.getProperty(x))
-        }
+  override def toString = s"SparkBatchIndexTask($getType, $getId, $getDataSchema, $getInterval, $getDataFiles, $getOutputPath, $getRowsPerPartition, $getRowFlushBoundary, $getProperties, $getMaster, $getContext, $getIndexSpec, $getClasspathPrefix)"
+}
+
+object SparkBatchIndexTask
+{
+
+  private val CHILD_PROPERTY_PREFIX: String = "druid.indexer.fork.property."
+  val KRYO_CLASSES = Array(
+    classOf[SerializedHadoopConfig],
+    classOf[SerializedJson[DataSegment]],
+    classOf[SerializedJson[QueryGranularity]],
+    classOf[SerializedJson[QueryGranularity]],
+    classOf[SerializedJson[AggregatorFactory]],
+    classOf[SerializedJson[ParseSpec]],
+    classOf[SerializedJson[IndexSpec]],
+    classOf[SerializedJson[DataSchema]]
+  ).asInstanceOf[Array[Class[_]]]
+  val log          = new Logger(SparkBatchIndexTask.getClass)
+  val TASK_TYPE    = "index_spark"
+
+  def runTask(args: java.util.ArrayList[String]): java.util.ArrayList[String] = {
+    val task = SerializedJsonStatic.mapper.readValue(args.get(0), classOf[SparkBatchIndexTask])
+    val conf = new SparkConf()
+    .setAppName(task.getId)
+    .setMaster(task.getMaster)
+    // TODO: better config here
+    .set("spark.executor.memory", "6G")
+    .set("spark.executor.cores", "2")
+    .set("spark.kryo.referenceTracking", "false")
+    // registerKryoClasses already does the below two lines
+    //.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+    //.set("spark.kryo.classesToRegister", SparkBatchIndexTask.KRYO_CLASSES.map(_.getCanonicalName).mkString(","))
+    .registerKryoClasses(SparkBatchIndexTask.KRYO_CLASSES)
+
+    System.getProperties.stringPropertyNames().filter(_.startsWith("io.druid")).foreach(
+      x => {
+        log.debug("Setting io.druid property [%s]", x)
+        conf.set(x, System.getProperty(x))
+      }
+    )
+    System.getProperties.stringPropertyNames().filter(_.startsWith(CHILD_PROPERTY_PREFIX)).foreach(
+      x => {
+        val y = x.substring(CHILD_PROPERTY_PREFIX.length)
+        log.debug("Setting child property [%s]", y)
+        conf.set(y, System.getProperty(x))
+      }
+    )
+
+    log
+      .debug(
+        "Adding properties: [%s]",
+        task.getProperties.entrySet().map(x => Seq(x.getKey.toString, x.getValue.toString).mkString(":")).mkString(",")
       )
-      System.getProperties.stringPropertyNames().filter(_.startsWith(CHILD_PROPERTY_PREFIX)).foreach(
-        x => {
-          val y = x.substring(CHILD_PROPERTY_PREFIX.length)
-          log.debug("Setting child property [%s]", y)
-          conf.set(y, System.getProperty(x))
-        }
-      )
-
-      log
-        .debug(
-          "Adding properties: [%s]",
-          properties_.entrySet().map(x => Seq(x.getKey.toString, x.getValue.toString).mkString(":")).mkString(",")
-        )
-      val sc = new SparkContext(conf.setAll(properties_))
-      optionalSC = Option.apply(sc)
-
+    val sc = new SparkContext(conf.setAll(task.getProperties))
+    try {
       System.getProperties.stringPropertyNames().filter(_.startsWith(CHILD_PROPERTY_PREFIX)).foreach(
         x => {
           val y = x.substring(CHILD_PROPERTY_PREFIX.length)
@@ -252,117 +353,24 @@ class SparkBatchIndexTask(
         }
       )
 
-      val myLock: TaskLock = Iterables.getOnlyElement(getTaskLocks(toolbox))
-      val version = myLock.getVersion
+      val version = args.get(1)
       log.debug("Using version [%s]", version)
 
       val dataSegments = SparkDruidIndexer.loadData(
-        dataFiles,
-        new SerializedJson[DataSchema](dataSchema),
-        interval,
-        getRowsPerPartition,
-        getRowFlushBoundary,
-        outPathString,
-        getIndexSpec,
+        task.getDataFiles,
+        new SerializedJson[DataSchema](task.getDataSchema),
+        task.getInterval,
+        task.getRowsPerPartition,
+        task.getRowFlushBoundary,
+        task.getOutputPath,
+        task.getIndexSpec,
         sc
       ).map(_.withVersion(version))
       log.info("Found segments `%s`", util.Arrays.deepToString(dataSegments.toArray))
-      toolbox.pushSegments(dataSegments)
-      status = Option.apply(TaskStatus.success(getId))
-    }
-    catch {
-      case t: Throwable => SparkBatchIndexTask.log.error(t, "Error in task [%s]", getId)
+      new util.ArrayList(dataSegments.map(SerializedJsonStatic.mapper.writeValueAsString))
     }
     finally {
-      Thread.currentThread.setContextClassLoader(priorLoader)
-      optionalSC match {
-        case Some(x) => x.stop()
-        case None => log.info("No spark context.")
-      }
-    }
-    status match {
-      case Some(x) => x
-      case None => TaskStatus.failure(getId)
+      sc.stop()
     }
   }
-
-  override def equals(o: Any): Boolean = {
-    if (!super.equals(o)) {
-      return false
-    }
-    if (o == null || this == null) {
-      return false
-    }
-    if (!o.isInstanceOf[SparkBatchIndexTask]) {
-      return false
-    }
-    val other = o.asInstanceOf[SparkBatchIndexTask]
-    Objects.equals(getId, other.getId) &&
-      Objects.equals(getDataSchema, other.getDataSchema) &&
-      Objects.equals(getInterval, other.getInterval) &&
-      Objects.equals(getDataFiles, other.getDataFiles) &&
-      Objects.equals(getOutputPath, other.getOutputPath) &&
-      Objects.equals(getRowsPerPartition, other.getRowsPerPartition) &&
-      Objects.equals(getRowFlushBoundary, other.getRowFlushBoundary) &&
-      Objects.equals(getProperties, other.getProperties) &&
-      Objects.equals(getMaster, other.getMaster) &&
-      Objects.equals(getContext, other.getContext) &&
-      Objects.equals(getIndexSpec, other.getIndexSpec)
-  }
-
-  @throws(classOf[Exception])
-  override def isReady(taskActionClient: TaskActionClient): Boolean = taskActionClient
-    .submit(new LockTryAcquireAction(interval))
-    .isPresent
-
-  @JsonProperty("id")
-  override def getId = super.getId
-
-  @JsonProperty("dataSchema")
-  def getDataSchema = dataSchema
-
-  @JsonProperty("interval")
-  def getInterval = interval
-
-  @JsonProperty("dataFiles")
-  def getDataFiles = dataFiles
-
-  @JsonProperty("outputPath")
-  def getOutputPath = outPathString
-
-  @JsonProperty("rowsPerPartition")
-  def getRowsPerPartition = rowsPerPartition_
-
-  @JsonProperty("rowsFlushBoundary")
-  def getRowFlushBoundary = rowsPerPersist_
-
-  @JsonProperty("properties")
-  def getProperties = properties_
-
-  @JsonProperty("master")
-  def getMaster = master_
-
-  @JsonProperty("context")
-  override def getContext = super.getContext
-
-  @JsonProperty("indexSpec")
-  def getIndexSpec = indexSpec_
-
-  override def toString = s"SparkBatchIndexTask($getType, $getId, $getDataSchema, $getInterval, $getDataFiles, $getOutputPath, $getRowsPerPartition, $getRowFlushBoundary, $getProperties, $getMaster, $getContext, $getIndexSpec)"
-}
-
-object SparkBatchIndexTask
-{
-  val KRYO_CLASSES = Array(
-    classOf[SerializedHadoopConfig],
-    classOf[SerializedJson[DataSegment]],
-    classOf[SerializedJson[QueryGranularity]],
-    classOf[SerializedJson[QueryGranularity]],
-    classOf[SerializedJson[AggregatorFactory]],
-    classOf[SerializedJson[ParseSpec]],
-    classOf[SerializedJson[IndexSpec]],
-    classOf[SerializedJson[DataSchema]]
-  ).asInstanceOf[Array[Class[_]]]
-  val log          = new Logger(SparkBatchIndexTask.getClass)
-  val TASK_TYPE    = "index_spark"
 }

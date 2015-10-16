@@ -115,18 +115,30 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
           }
           qindex.getNumRows should be > 0
           for(colName <- Seq("count")) {
-            val column = index.getColumn(colName)
-            for (i <- Range.apply(0, qindex.getNumRows)) {
-              column.getGenericColumn.getLongSingleValueRow(i) should not be 0
+            val column = index.getColumn(colName).getGenericColumn
+            try {
+              for (i <- Range.apply(0, qindex.getNumRows)) {
+                column.getLongSingleValueRow(i) should not be 0
+              }
+            } finally {
+              column.close()
             }
           }
           for(colName <- Seq("L_QUANTITY_longSum")) {
-            val column = index.getColumn(colName)
-            Range.apply(0, qindex.getNumRows).map(column.getGenericColumn.getLongSingleValueRow).sum should not be 0
+            val column = index.getColumn(colName).getGenericColumn
+            try {
+              Range.apply(0, qindex.getNumRows).map(column.getLongSingleValueRow).sum should not be 0
+            } finally {
+              column.close()
+            }
           }
           for(colName <- Seq("L_DISCOUNT_doubleSum", "L_TAX_doubleSum")) {
-            val column = index.getColumn(colName)
-            Range.apply(0, qindex.getNumRows).map(column.getGenericColumn.getFloatSingleValueRow).sum should not be 0.0D
+            val column = index.getColumn(colName).getGenericColumn
+            try {
+              Range.apply(0, qindex.getNumRows).map(column.getFloatSingleValueRow).sum should not be 0.0D
+            } finally {
+              column.close()
+            }
           }
           index.getDataInterval.getEnd.getMillis should not be (JodaUtils.MAX_INSTANT)
         }
