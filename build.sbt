@@ -9,18 +9,21 @@ homepage := Some(url("https://github.com/metamx/druid-spark-batch"))
 scalaVersion := "2.11.7"
 crossScalaVersions := Seq("2.10.5", "2.11.7")
 
+val druid_version = "0.8.2-rc1"
+
 libraryDependencies += "org.apache.spark" %% "spark-core" % "1.6.0-SNAPSHOT" exclude ("log4j", "log4j") exclude ("org.apache.hadoop", "hadoop-client")
 libraryDependencies += "org.spark-project.akka" %% "akka-actor" % "2.3.4-spark"
 // For Path
 libraryDependencies += "org.apache.hadoop" % "hadoop-client" % "2.4.0" exclude("javax.servlet", "servlet-api")
 libraryDependencies += "org.apache.hadoop" % "hadoop-common" % "2.4.0" exclude("javax.servlet", "servlet-api")
 libraryDependencies += "org.scalatest" %% "scalatest" % "2.2.4" % "test"
-libraryDependencies += "io.druid" % "druid-processing" % "0.8.3-SNAPSHOT"
-libraryDependencies += "io.druid" % "druid-server" % "0.8.3-SNAPSHOT"
-libraryDependencies += "io.druid" % "druid-indexing-service" % "0.8.3-SNAPSHOT"
-libraryDependencies += "io.druid" % "druid-indexing-hadoop" % "0.8.3-SNAPSHOT"
+libraryDependencies += "io.druid" % "druid-processing" % druid_version
+libraryDependencies += "io.druid" % "druid-server" % druid_version
+libraryDependencies += "io.druid" % "druid-indexing-service" % druid_version
+libraryDependencies += "io.druid" % "druid-indexing-hadoop" % druid_version
 libraryDependencies += "com.sun.jersey" % "jersey-servlet" % "1.17.1"
 libraryDependencies += "org.xerial.snappy" % "snappy-java" % "1.1.2-M1"
+
 
 resolvers += Resolver.mavenLocal
 

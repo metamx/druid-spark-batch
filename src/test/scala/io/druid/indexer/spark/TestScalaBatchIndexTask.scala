@@ -194,7 +194,12 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
   "The ScalaBatchIndexTask" should "properly SerDe a full object" in {
     val taskPre = buildSparkBatchIndexTask()
     val taskPost = objectMapper.readValue(objectMapper.writeValueAsString(taskPre), classOf[SparkBatchIndexTask])
-    taskPre should equal(taskPost)
+    if (classOf[QueryGranularity].getPackage.getImplementationVersion >= "0.8.3") {
+      // https://github.com/druid-io/druid/pull/1824
+      taskPre should equal(taskPost)
+    } else {
+      assume(false, "Druid version not high enough for test")
+    }
   }
 
   "The SparkBatchIndexTask" should "properly deserialize" in {
@@ -203,7 +208,12 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
     val task = objectMapper.readValue(str, classOf[Task])
     task.getContext shouldBe 'Empty
     assertResult(SparkBatchIndexTask.TASK_TYPE)(task.getType)
-    taskPre should ===(task)
+    if (classOf[QueryGranularity].getPackage.getImplementationVersion >= "0.8.3") {
+      // https://github.com/druid-io/druid/pull/1824
+      taskPre should ===(task)
+    } else {
+      assume(false, "Druid version not high enough for test")
+    }
   }
 
   "The SparkBatchIndexTask" should "be equal for equal tasks" in {
