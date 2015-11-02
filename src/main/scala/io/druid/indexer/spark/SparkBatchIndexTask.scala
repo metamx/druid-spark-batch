@@ -56,8 +56,6 @@ class SparkBatchIndexTask(
   interval: Interval,
   @JsonProperty("dataFiles")
   dataFiles: util.List[String],
-  @JsonProperty("outputPath")
-  outPathString: String,
   @JsonProperty("rowsPerPartition")
   rowsPerPartition: Long = 5000000,
   @JsonProperty("rowsFlushBoundary")
@@ -161,18 +159,18 @@ class SparkBatchIndexTask(
     Preconditions.checkNotNull(Strings.emptyToNull(dataSchema.getDataSource), "%s", "dataSource")
     Preconditions.checkNotNull(dataSchema.getParserMap, "%s", "parseSpec")
     Preconditions.checkNotNull(interval, "%s", "interval")
-    Preconditions.checkNotNull(Strings.emptyToNull(outPathString), "%s", "outputPath")
     Preconditions.checkNotNull(dataSchema.getGranularitySpec.getQueryGranularity, "%s", "queryGranularity")
     Preconditions.checkNotNull(dataSchema.getGranularitySpec.getSegmentGranularity, "%s", "segmentGranularity")
 
     var status: Option[TaskStatus] = Option.empty
 
     try {
+      val outputPath = toolbox.getSegmentPusher.getPathForHadoop(getDataSource)
       val classLoader = buildClassLoader(toolbox)
       val task = SerializedJsonStatic.mapper.writeValueAsString(this)
       log.debug("Sending task `%s`", task)
 
-      val result = HadoopTask.invokeForeignLoader[util.ArrayList[String], util.ArrayList[String]]("io.druid.indexer.spark.Runner", new util.ArrayList(List(task, Iterables.getOnlyElement(getTaskLocks(toolbox)).getVersion)), classLoader)
+      val result = HadoopTask.invokeForeignLoader[util.ArrayList[String], util.ArrayList[String]]("io.druid.indexer.spark.Runner", new util.ArrayList(List(task, Iterables.getOnlyElement(getTaskLocks(toolbox)).getVersion, outputPath)), classLoader)
       toolbox.pushSegments(result.map(SerializedJsonStatic.mapper.readValue(_, classOf[DataSegment])))
       status = Option.apply(TaskStatus.success(getId))
     }
@@ -200,7 +198,6 @@ class SparkBatchIndexTask(
       Objects.equals(getDataSchema, other.getDataSchema) &&
       Objects.equals(getInterval, other.getInterval) &&
       Objects.equals(getDataFiles, other.getDataFiles) &&
-      Objects.equals(getOutputPath, other.getOutputPath) &&
       Objects.equals(getRowsPerPartition, other.getRowsPerPartition) &&
       Objects.equals(getRowFlushBoundary, other.getRowFlushBoundary) &&
       Objects.equals(getProperties, other.getProperties) &&
@@ -227,9 +224,6 @@ class SparkBatchIndexTask(
   @JsonProperty("dataFiles")
   def getDataFiles = dataFiles
 
-  @JsonProperty("outputPath")
-  def getOutputPath = outPathString
-
   @JsonProperty("rowsPerPartition")
   def getRowsPerPartition = rowsPerPartition_
 
@@ -252,7 +246,7 @@ class SparkBatchIndexTask(
   @JsonProperty("classpathPrefix")
   override def getClasspathPrefix = classpathPrefix
 
-  override def toString = s"SparkBatchIndexTask($getType, $getId, $getDataSchema, $getInterval, $getDataFiles, $getOutputPath, $getRowsPerPartition, $getRowFlushBoundary, $getProperties, $getMaster, $getContext, $getIndexSpec, $getClasspathPrefix)"
+  override def toString = s"SparkBatchIndexTask($getType, $getId, $getDataSchema, $getInterval, $getDataFiles, $getRowsPerPartition, $getRowFlushBoundary, $getProperties, $getMaster, $getContext, $getIndexSpec, $getClasspathPrefix)"
 }
 
 object SparkBatchIndexTask
@@ -354,6 +348,7 @@ object SparkBatchIndexTask
       )
 
       val version = args.get(1)
+      val outputPath = args.get(2)
       log.debug("Using version [%s]", version)
 
       val dataSegments = SparkDruidIndexer.loadData(
@@ -362,7 +357,7 @@ object SparkBatchIndexTask
         task.getInterval,
         task.getRowsPerPartition,
         task.getRowFlushBoundary,
-        task.getOutputPath,
+        outputPath,
         task.getIndexSpec,
         sc
       ).map(_.withVersion(version))
