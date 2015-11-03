@@ -6,7 +6,7 @@ net.virtualvoid.sbt.graph.Plugin.graphSettings
 licenses := Seq("Apache License, Version 2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0"))
 homepage := Some(url("https://github.com/metamx/druid-spark-batch"))
 
-scalaVersion := "2.11.7"
+scalaVersion := "2.10.5"
 crossScalaVersions := Seq("2.10.5", "2.11.7")
 
 val druid_version = "f5737d6" // 0.8.2-rc2
