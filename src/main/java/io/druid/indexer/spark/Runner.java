@@ -19,8 +19,6 @@
 
 package io.druid.indexer.spark;
 
-import io.druid.timeline.DataSegment;
-
 import java.util.ArrayList;
 
 // This makes referencing the class in a reflective way easier

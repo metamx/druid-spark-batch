@@ -137,9 +137,9 @@ object TestScalaBatchIndexTask
   }
   val master                                   = "local[999]"
 
-  val granSpec   = new UniformGranularitySpec(Granularity.YEAR, QueryGranularity.ALL, Seq(interval))
-  val dataSchema = buildDataSchema()
-  val indexSpec  = new IndexSpec()
+  val granSpec        = new UniformGranularitySpec(Granularity.YEAR, QueryGranularity.ALL, Seq(interval))
+  val dataSchema      = buildDataSchema()
+  val indexSpec       = new IndexSpec()
   val classpathPrefix = "somePrefix.jar"
 
   def buildDataSchema(
@@ -162,7 +162,6 @@ object TestScalaBatchIndexTask
     dataSchema: DataSchema = dataSchema,
     interval: Interval = interval,
     dataFiles: Seq[String] = dataFiles,
-    outPathString: String = outPath,
     rowsPerPartition: Long = rowsPerPartition,
     rowsPerPersist: Int = rowsPerFlush,
     properties: Properties = properties,
@@ -175,7 +174,6 @@ object TestScalaBatchIndexTask
     dataSchema,
     interval,
     dataFiles,
-    outPathString,
     rowsPerPartition,
     rowsPerPersist,
     properties,
@@ -194,7 +192,8 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
   "The ScalaBatchIndexTask" should "properly SerDe a full object" in {
     val taskPre = buildSparkBatchIndexTask()
     val taskPost = objectMapper.readValue(objectMapper.writeValueAsString(taskPre), classOf[SparkBatchIndexTask])
-    if (classOf[QueryGranularity].getPackage.getImplementationVersion >= "0.8.3") {
+    val implVersion = classOf[QueryGranularity].getPackage.getImplementationVersion
+    if (implVersion >= "0.8.3" && implVersion.startsWith("0.")) {
       // https://github.com/druid-io/druid/pull/1824
       taskPre should equal(taskPost)
     } else {
@@ -208,7 +207,8 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
     val task = objectMapper.readValue(str, classOf[Task])
     task.getContext shouldBe 'Empty
     assertResult(SparkBatchIndexTask.TASK_TYPE)(task.getType)
-    if (classOf[QueryGranularity].getPackage.getImplementationVersion >= "0.8.3") {
+    val implVersion = classOf[QueryGranularity].getPackage.getImplementationVersion
+    if (implVersion >= "0.8.3" && implVersion.startsWith("0.")) {
       // https://github.com/druid-io/druid/pull/1824
       taskPre should ===(task)
     } else {
