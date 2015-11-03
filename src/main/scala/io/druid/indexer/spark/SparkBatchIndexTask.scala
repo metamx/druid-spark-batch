@@ -61,20 +61,7 @@ class SparkBatchIndexTask(
   @JsonProperty("rowsFlushBoundary")
   rowsPerPersist: Int = 80000,
   @JsonProperty("properties")
-  properties: Properties =
-  Seq(
-    ("user.timezone", "UTC"),
-    ("file.encoding", "UTF-8"),
-    ("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager"),
-    ("org.jboss.logging.provider", "slf4j"),
-    ("druid.processing.columnCache.sizeBytes", "1000000000"),
-    ("druid.extensions.searchCurrentClassloader", "true")
-  ).foldLeft(new Properties())(
-    (p, e) => {
-      p.setProperty(e._1, e._2)
-      p
-    }
-  ),
+  properties: Properties = new Properties(),
   @JsonProperty("master")
   master: String = "local[1]",
   @JsonProperty("context")
@@ -104,19 +91,7 @@ class SparkBatchIndexTask(
   val log                  : Logger                            = new Logger(classOf[SparkBatchIndexTask])
   val properties_          : Properties                        =
     if (properties == null) {
-      Seq(
-        ("user.timezone", "UTC"),
-        ("file.encoding", "UTF-8"),
-        ("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager"),
-        ("org.jboss.logging.provider", "slf4j"),
-        ("druid.processing.columnCache.sizeBytes", "1000000000"),
-        ("druid.extensions.searchCurrentClassloader", "true")
-      ).foldLeft(new Properties())(
-        (p, e) => {
-          p.setProperty(e._1, e._2)
-          p
-        }
-      )
+      new Properties()
     } else {
       properties
     }
@@ -275,6 +250,12 @@ object SparkBatchIndexTask
     .set("spark.executor.memory", "6G")
     .set("spark.executor.cores", "2")
     .set("spark.kryo.referenceTracking", "false")
+    .set("user.timezone", "UTC")
+    .set("file.encoding", "UTF-8")
+    .set("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager")
+    .set("org.jboss.logging.provider", "slf4j")
+    .set("druid.processing.columnCache.sizeBytes", "1000000000")
+    .set("druid.extensions.searchCurrentClassloader", "true")
     // registerKryoClasses already does the below two lines
     //.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
     //.set("spark.kryo.classesToRegister", SparkBatchIndexTask.KRYO_CLASSES.map(_.getCanonicalName).mkString(","))
