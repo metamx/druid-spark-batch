@@ -29,6 +29,7 @@ import com.google.common.base.{Preconditions, Strings}
 import com.google.common.collect.Iterables
 import com.google.inject.Injector
 import com.metamx.common.logger.Logger
+import io.druid.common.utils.JodaUtils
 import io.druid.data.input.impl.ParseSpec
 import io.druid.granularity.QueryGranularity
 import io.druid.guice.{ExtensionsConfig, GuiceInjectors}
@@ -52,9 +53,8 @@ class SparkBatchIndexTask(
   id: String,
   @JsonProperty("dataSchema")
   dataSchema: DataSchema,
-  // TODO: make sure this works as intervals
-  @JsonProperty("interval")
-  interval: Interval,
+  @JsonProperty("intervals")
+  intervals: util.List[Interval],
   @JsonProperty("paths")
   dataFiles: util.List[String],
   @JsonProperty("targetPartitionSize")
@@ -71,16 +71,25 @@ class SparkBatchIndexTask(
   indexSpec: IndexSpec = new IndexSpec(),
   @JsonProperty("classpathPrefix")
   classpathPrefix: String = null
-  ) extends HadoopTask(
+) extends HadoopTask(
   if (id == null) {
     AbstractTask
-      .makeId(null, SparkBatchIndexTask.TASK_TYPE, dataSchema.getDataSource, interval)
+      .makeId(
+        null, SparkBatchIndexTask.TASK_TYPE, dataSchema.getDataSource,
+        JodaUtils
+          .umbrellaInterval(JodaUtils.condenseIntervals(Preconditions.checkNotNull(intervals, "%s", "intervals")))
+      )
   }
   else {
     id
   },
   dataSchema.getDataSource,
-  List[String]("%s:%s_2.11:%s" format (classOf[SparkBatchIndexTask].getPackage.getImplementationVendor, classOf[SparkBatchIndexTask].getPackage.getImplementationTitle, classOf[SparkBatchIndexTask].getPackage.getImplementationVersion)),
+  List[String](
+    // TODO: better handle scala version here
+    "%s:%s_2.10:%s" format
+      (classOf[SparkBatchIndexTask].getPackage.getImplementationVendor, classOf[SparkBatchIndexTask].getPackage
+        .getImplementationTitle, classOf[SparkBatchIndexTask].getPackage.getImplementationVersion)
+  ),
   if (context == null) {
     Map[String, String]()
   }
@@ -134,7 +143,6 @@ class SparkBatchIndexTask(
     Preconditions.checkArgument(!dataFiles.isEmpty, "%s", "empty dataFiles")
     Preconditions.checkNotNull(Strings.emptyToNull(dataSchema.getDataSource), "%s", "dataSource")
     Preconditions.checkNotNull(dataSchema.getParserMap, "%s", "parseSpec")
-    Preconditions.checkNotNull(interval, "%s", "interval")
     Preconditions.checkNotNull(dataSchema.getGranularitySpec.getQueryGranularity, "%s", "queryGranularity")
     Preconditions.checkNotNull(dataSchema.getGranularitySpec.getSegmentGranularity, "%s", "segmentGranularity")
 
@@ -146,7 +154,11 @@ class SparkBatchIndexTask(
       val task = SerializedJsonStatic.mapper.writeValueAsString(this)
       log.debug("Sending task `%s`", task)
 
-      val result = HadoopTask.invokeForeignLoader[util.ArrayList[String], util.ArrayList[String]]("io.druid.indexer.spark.Runner", new util.ArrayList(List(task, Iterables.getOnlyElement(getTaskLocks(toolbox)).getVersion, outputPath)), classLoader)
+      val result = HadoopTask.invokeForeignLoader[util.ArrayList[String], util.ArrayList[String]](
+        "io.druid.indexer.spark.Runner",
+        new util.ArrayList(List(task, Iterables.getOnlyElement(getTaskLocks(toolbox)).getVersion, outputPath)),
+        classLoader
+      )
       toolbox.pushSegments(result.map(SerializedJsonStatic.mapper.readValue(_, classOf[DataSegment])))
       status = Option.apply(TaskStatus.success(getId))
     }
@@ -172,7 +184,7 @@ class SparkBatchIndexTask(
     val other = o.asInstanceOf[SparkBatchIndexTask]
     Objects.equals(getId, other.getId) &&
       Objects.equals(getDataSchema, other.getDataSchema) &&
-      Objects.equals(getInterval, other.getInterval) &&
+      Objects.equals(getIntervals, other.getIntervals) &&
       Objects.equals(getDataFiles, other.getDataFiles) &&
       Objects.equals(getTargetPartitionSize, other.getTargetPartitionSize) &&
       Objects.equals(getRowFlushBoundary, other.getRowFlushBoundary) &&
@@ -185,7 +197,7 @@ class SparkBatchIndexTask(
 
   @throws(classOf[Exception])
   override def isReady(taskActionClient: TaskActionClient): Boolean = taskActionClient
-    .submit(new LockTryAcquireAction(interval))
+    .submit(new LockTryAcquireAction(totalInterval))
     .isPresent
 
   @JsonProperty("id")
@@ -194,8 +206,8 @@ class SparkBatchIndexTask(
   @JsonProperty("dataSchema")
   def getDataSchema = dataSchema
 
-  @JsonProperty("interval")
-  def getInterval = interval
+  @JsonProperty("intervals")
+  def getIntervals = intervals
 
   @JsonProperty("paths")
   def getDataFiles = dataFiles
@@ -218,18 +230,19 @@ class SparkBatchIndexTask(
   @JsonProperty("indexSpec")
   def getIndexSpec = indexSpec_
 
+  lazy val totalInterval: Interval = JodaUtils.umbrellaInterval(JodaUtils.condenseIntervals(intervals))
 
   @JsonProperty("classpathPrefix")
   override def getClasspathPrefix = classpathPrefix
 
-  override def toString = s"SparkBatchIndexTask($getType, $getId, $getDataSchema, $getInterval, $getDataFiles, $getTargetPartitionSize, $getRowFlushBoundary, $getProperties, $getMaster, $getContext, $getIndexSpec, $getClasspathPrefix)"
+  override def toString = s"SparkBatchIndexTask($getType, $getId, $getDataSchema, $getIntervals, $getDataFiles, $getTargetPartitionSize, $getRowFlushBoundary, $getProperties, $getMaster, $getContext, $getIndexSpec, $getClasspathPrefix)"
 }
 
 object SparkBatchIndexTask
 {
-  private val DEFAULT_ROW_FLUSH_BOUNDARY: Int = 80000
-  private val DEFAULT_TARGET_PARTITION_SIZE: Long = 5000000L
-  private val CHILD_PROPERTY_PREFIX: String = "druid.indexer.fork.property."
+  private val DEFAULT_ROW_FLUSH_BOUNDARY   : Int    = 80000
+  private val DEFAULT_TARGET_PARTITION_SIZE: Long   = 5000000L
+  private val CHILD_PROPERTY_PREFIX        : String = "druid.indexer.fork.property."
   val KRYO_CLASSES = Array(
     classOf[SerializedHadoopConfig],
     classOf[SerializedJson[DataSegment]],
@@ -336,7 +349,7 @@ object SparkBatchIndexTask
       val dataSegments = SparkDruidIndexer.loadData(
         task.getDataFiles,
         new SerializedJson[DataSchema](task.getDataSchema),
-        task.getInterval,
+        task.totalInterval,
         task.getTargetPartitionSize,
         task.getRowFlushBoundary,
         outputPath,

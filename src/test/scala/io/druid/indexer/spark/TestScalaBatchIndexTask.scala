@@ -172,7 +172,7 @@ object TestScalaBatchIndexTask
     ): SparkBatchIndexTask = new SparkBatchIndexTask(
     id,
     dataSchema,
-    interval,
+    Seq(interval),
     dataFiles,
     rowsPerPartition,
     rowsPerPersist,
