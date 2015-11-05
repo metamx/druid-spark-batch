@@ -31,8 +31,8 @@ import com.google.common.io.Closer
 import com.google.inject.{Binder, Key, Module}
 import com.metamx.common.logger.Logger
 import com.metamx.common.{Granularity, IAE, ISE}
-import io.druid.data.input.{ProtoBufInputRowParser, MapBasedInputRow}
 import io.druid.data.input.impl._
+import io.druid.data.input.{MapBasedInputRow, ProtoBufInputRowParser}
 import io.druid.guice.annotations.{Self, Smile}
 import io.druid.guice.{GuiceInjectors, JsonConfigProvider}
 import io.druid.indexer.{HadoopyStringInputRowParser, JobHelper}
