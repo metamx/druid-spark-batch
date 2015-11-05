@@ -61,7 +61,7 @@ object SparkDruidIndexer
   val log = new Logger(SparkDruidIndexer.getClass)
 
   def loadData(
-    data_file: Seq[String],
+    dataFiles: Seq[String],
     dataSchema: SerializedJson[DataSchema],
     ingestInterval: Interval,
     rowsPerPartition: Long,
@@ -80,7 +80,7 @@ object SparkDruidIndexer
     log.info("Starting caching of raw data for [%s] over interval [%s]", dataSource, ingestInterval)
 
     val baseData = sc
-      .union(data_file.map(sc.textFile(_)))
+      .union(dataFiles.map(sc.textFile(_)))
       .mapPartitions(
         (it) => {
           val i = dataSchema.getDelegate.getParser match {
