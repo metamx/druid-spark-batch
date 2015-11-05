@@ -52,14 +52,15 @@ class SparkBatchIndexTask(
   id: String,
   @JsonProperty("dataSchema")
   dataSchema: DataSchema,
+  // TODO: make sure this works as intervals
   @JsonProperty("interval")
   interval: Interval,
-  @JsonProperty("dataFiles")
+  @JsonProperty("paths")
   dataFiles: util.List[String],
-  @JsonProperty("rowsPerPartition")
-  rowsPerPartition: Long = 5000000,
-  @JsonProperty("rowsFlushBoundary")
-  rowsPerPersist: Int = 80000,
+  @JsonProperty("targetPartitionSize")
+  targetPartitionSize: Long = SparkBatchIndexTask.DEFAULT_TARGET_PARTITION_SIZE,
+  @JsonProperty("maxRowsInMemory")
+  rowFlushBoundary: Int = SparkBatchIndexTask.DEFAULT_ROW_FLUSH_BOUNDARY,
   @JsonProperty("properties")
   properties: Properties = new Properties(),
   @JsonProperty("master")
@@ -95,11 +96,11 @@ class SparkBatchIndexTask(
     } else {
       properties
     }
-  val rowsPerPartition_    : Long                              =
-    if (rowsPerPartition == 0) {
-      5000000L
+  val targetPartitionSize_ : Long                              =
+    if (targetPartitionSize == 0) {
+      SparkBatchIndexTask.DEFAULT_TARGET_PARTITION_SIZE
     } else {
-      rowsPerPartition
+      targetPartitionSize
     }
   val aggregatorFactories_ : java.util.List[AggregatorFactory] =
     if (dataSchema.getAggregators == null) {
@@ -107,11 +108,11 @@ class SparkBatchIndexTask(
     } else {
       dataSchema.getAggregators.toList
     }
-  val rowsPerPersist_      : Int                               =
-    if (rowsPerPersist == 0) {
-      80000
+  val rowFlushBoundary_    : Int                               =
+    if (rowFlushBoundary == 0) {
+      SparkBatchIndexTask.DEFAULT_ROW_FLUSH_BOUNDARY
     } else {
-      rowsPerPersist
+      rowFlushBoundary
     }
   val master_              : String                            =
     if (master == null) {
@@ -129,7 +130,7 @@ class SparkBatchIndexTask(
   override def getType: String = SparkBatchIndexTask.TASK_TYPE
 
   override def run(toolbox: TaskToolbox): TaskStatus = {
-    Preconditions.checkNotNull(dataFiles, "%s", "dataFiles")
+    Preconditions.checkNotNull(dataFiles, "%s", "paths")
     Preconditions.checkArgument(!dataFiles.isEmpty, "%s", "empty dataFiles")
     Preconditions.checkNotNull(Strings.emptyToNull(dataSchema.getDataSource), "%s", "dataSource")
     Preconditions.checkNotNull(dataSchema.getParserMap, "%s", "parseSpec")
@@ -173,7 +174,7 @@ class SparkBatchIndexTask(
       Objects.equals(getDataSchema, other.getDataSchema) &&
       Objects.equals(getInterval, other.getInterval) &&
       Objects.equals(getDataFiles, other.getDataFiles) &&
-      Objects.equals(getRowsPerPartition, other.getRowsPerPartition) &&
+      Objects.equals(getTargetPartitionSize, other.getTargetPartitionSize) &&
       Objects.equals(getRowFlushBoundary, other.getRowFlushBoundary) &&
       Objects.equals(getProperties, other.getProperties) &&
       Objects.equals(getMaster, other.getMaster) &&
@@ -196,14 +197,14 @@ class SparkBatchIndexTask(
   @JsonProperty("interval")
   def getInterval = interval
 
-  @JsonProperty("dataFiles")
+  @JsonProperty("paths")
   def getDataFiles = dataFiles
 
-  @JsonProperty("rowsPerPartition")
-  def getRowsPerPartition = rowsPerPartition_
+  @JsonProperty("targetPartitionSize")
+  def getTargetPartitionSize = targetPartitionSize_
 
-  @JsonProperty("rowsFlushBoundary")
-  def getRowFlushBoundary = rowsPerPersist_
+  @JsonProperty("maxRowsInMemory")
+  def getRowFlushBoundary = rowFlushBoundary_
 
   @JsonProperty("properties")
   def getProperties = properties_
@@ -221,12 +222,13 @@ class SparkBatchIndexTask(
   @JsonProperty("classpathPrefix")
   override def getClasspathPrefix = classpathPrefix
 
-  override def toString = s"SparkBatchIndexTask($getType, $getId, $getDataSchema, $getInterval, $getDataFiles, $getRowsPerPartition, $getRowFlushBoundary, $getProperties, $getMaster, $getContext, $getIndexSpec, $getClasspathPrefix)"
+  override def toString = s"SparkBatchIndexTask($getType, $getId, $getDataSchema, $getInterval, $getDataFiles, $getTargetPartitionSize, $getRowFlushBoundary, $getProperties, $getMaster, $getContext, $getIndexSpec, $getClasspathPrefix)"
 }
 
 object SparkBatchIndexTask
 {
-
+  private val DEFAULT_ROW_FLUSH_BOUNDARY: Int = 80000
+  private val DEFAULT_TARGET_PARTITION_SIZE: Long = 5000000L
   private val CHILD_PROPERTY_PREFIX: String = "druid.indexer.fork.property."
   val KRYO_CLASSES = Array(
     classOf[SerializedHadoopConfig],
@@ -246,7 +248,6 @@ object SparkBatchIndexTask
     val conf = new SparkConf()
     .setAppName(task.getId)
     .setMaster(task.getMaster)
-    // TODO: better config here
     .set("spark.executor.memory", "6G")
     .set("spark.executor.cores", "2")
     .set("spark.kryo.referenceTracking", "false")
@@ -336,7 +337,7 @@ object SparkBatchIndexTask
         task.getDataFiles,
         new SerializedJson[DataSchema](task.getDataSchema),
         task.getInterval,
-        task.getRowsPerPartition,
+        task.getTargetPartitionSize,
         task.getRowFlushBoundary,
         outputPath,
         task.getIndexSpec,
