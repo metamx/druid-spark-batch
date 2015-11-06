@@ -25,6 +25,7 @@ libraryDependencies += "io.druid" % "druid-indexing-service" % druid_version
 libraryDependencies += "io.druid" % "druid-indexing-hadoop" % druid_version
 libraryDependencies += "com.sun.jersey" % "jersey-servlet" % "1.17.1"
 libraryDependencies += "org.xerial.snappy" % "snappy-java" % "1.1.2-M1"
+libraryDependencies += "org.joda" % "joda-convert" % "1.8.1" % "compile"
 
 
 resolvers += Resolver.mavenLocal
