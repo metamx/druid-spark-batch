@@ -321,21 +321,21 @@ object SparkBatchIndexTask
         classpathProperty = System.getProperty("java.class.path")
       }
 
-      classpathProperty.split(File.pathSeparator).foreach(
+      classpathProperty.split(File.pathSeparator).filter(_.endsWith(".jar")).foreach(
         x => {
           log.info("Adding path jar [%s]", x)
           sc.addJar(x)
         }
       )
 
-      SparkContext.jarOfClass(classOf[SparkBatchIndexTask]).foreach(
+      SparkContext.jarOfClass(classOf[SparkBatchIndexTask]).filter(_.endsWith(".jar")).foreach(
         x => {
           log.info("Adding class jar [%s]", x)
           sc.addJar(x)
         }
       )
 
-      extensionJars.foreach(
+      extensionJars.filter(_.endsWith(".jar")).foreach(
         x => {
           log.info("Adding extension jar [%s]", x)
           sc.addJar(x)
