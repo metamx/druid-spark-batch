@@ -8,8 +8,8 @@ To build issue the commnand `JAVA_HOME=$(/usr/libexec/java_home -v 1.7) sbt clea
 ## Default Properties
 The default properties injected into spark are as follows:
 ```
-    .set("spark.executor.memory", "6G")
-    .set("spark.executor.cores", "2")
+    .set("spark.executor.memory", "7G")
+    .set("spark.executor.cores", "1")
     .set("spark.kryo.referenceTracking", "false")
     .set("user.timezone", "UTC")
     .set("file.encoding", "UTF-8")

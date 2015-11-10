@@ -174,7 +174,6 @@ object SparkDruidIndexer
 
           val parser: InputRowParser[_] = SerializedJsonStatic.mapper
             .convertValue(dataSchema.getDelegate.getParserMap, classOf[InputRowParser[_]])
-          val dimensions = parser.getParseSpec.getDimensionsSpec.getDimensions
 
           val rows = it
 
@@ -484,20 +483,27 @@ class SerializedHadoopConfig(delegate: Configuration) extends KryoSerializable w
 
 class DateBucketPartitioner(gran: Granularity, interval: Interval) extends Partitioner
 {
-  val intervalMap: Map[Interval, Int] = gran.getIterable(interval)
+  val intervalMap: Map[Long, Int] = gran.getIterable(interval)
     .toSeq
-    .foldLeft(Map[Interval, Int]())((a, b) => a + (b -> a.size))
+    .map(_.getStart.getMillis)
+    .foldLeft(Map[Long, Int]())((a, b) => a + (b -> a.size))
 
   override def numPartitions: Int = intervalMap.size
 
   override def getPartition(key: Any): Int = key match {
     case null => throw new NullPointerException("Bad partition key")
     case (k: Long, v: Any) => getPartition(k)
-    case (k: Long) => intervalMap.getOrElse(
-      gran.bucket(new DateTime(k)), {
-        throw new ISE("%s", "unknown bucket for datetime %s" format gran.bucket(new DateTime(k)))
+    case (k: Long) =>
+      val mapKey = gran.bucket(new DateTime(k)).getStart.getMillis
+      val v = intervalMap.get(mapKey)
+      if (v.isEmpty) {
+        // Lazy ISE creation. getOrElse will create it each time
+        throw new ISE(
+          "%s",
+          "unknown bucket for datetime %s. Known values are %s" format(mapKey, intervalMap.keys)
+        )
       }
-    )
+      v.get
     case x => throw new IAE("%s", "Unknown type for %s" format x)
   }
 }
@@ -512,13 +518,12 @@ class DateBucketAndHashPartitioner(gran: Granularity, interval: Interval, partMa
   override def getPartition(key: Any): Int = key match {
     case (k: Long, v: AnyRef) =>
       val dateBucket = gran.truncate(new DateTime(k)).getMillis
-      val modSize = maxTimePerBucket
-        .getOrElse(
-          dateBucket.toLong, {
-            throw new ISE("%s", "bad date bucket [%s]. available: %s" format(dateBucket, maxTimePerBucket.keySet))
-          }
-        )
-      val hash = Math.abs(v.hashCode()) % modSize
+      val modSize = maxTimePerBucket.get(dateBucket.toLong)
+      if(modSize.isEmpty) {
+        // Lazy ISE creation
+        throw new ISE("%s", "bad date bucket [%s]. available: %s" format(dateBucket.toLong, maxTimePerBucket.keySet))
+      }
+      val hash = Math.abs(v.hashCode()) % modSize.get
       partMap
         .getOrElse(
           (dateBucket.toLong, hash.toLong), {
