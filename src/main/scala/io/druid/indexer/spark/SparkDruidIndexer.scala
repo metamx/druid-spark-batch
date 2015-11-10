@@ -69,7 +69,7 @@ object SparkDruidIndexer
     outPathString: String,
     indexSpec: IndexSpec,
     sc: SparkContext
-    ): Seq[DataSegment] =
+  ): Seq[DataSegment] =
   {
     val dataSource = dataSchema.getDelegate.getDataSource
     log.info("Launching Spark task with jar version [%s]", getClass.getPackage.getImplementationVersion)
@@ -86,7 +86,8 @@ object SparkDruidIndexer
           val i = dataSchema.getDelegate.getParser match {
             case x: StringInputRowParser => it.map(x.parse)
             case x: HadoopyStringInputRowParser => it.map(x.parse)
-            case x: ProtoBufInputRowParser => throw new UnsupportedOperationException("Cannot use Protobuf for text input")
+            case x: ProtoBufInputRowParser => throw new
+                UnsupportedOperationException("Cannot use Protobuf for text input")
             case x =>
               log
                 .warn(
@@ -119,7 +120,9 @@ object SparkDruidIndexer
         0.05,
         new DateBucketPartitioner(dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity, ingestInterval)
       )
-      .collect().map(_.x).toMap
+      .map(x => dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity.truncate(new DateTime(x._1)).getMillis -> x._2)
+      .reduceByKey(_ + _)
+      .collect().toMap
 
     // Map key tuple is DateBucket, PartitionInBucket with map value of Partition #
     val hashToPartitionMap: Map[(Long, Long), Int] = getSizedPartitionMap(partitionMap, rowsPerPartition)
@@ -316,13 +319,13 @@ object SparkDruidIndexer
   }
 
   /**
-   * Take a map of indices and size for that index, and return a map of (index, sub_index)->new_index
-   * each new_index of which can have at most rowsPerPartition assuming random-ish hashing into the indices
-   * @param inMap A map of index to count of items in that index
-   * @param rowsPerPartition The maximum desired size per output index.
-   * @return A map of (index, sub_index)->new_index . The size of this map times rowsPerPartition is greater than
-   *         or equal to the number of events (sum of keys of inMap)
-   */
+    * Take a map of indices and size for that index, and return a map of (index, sub_index)->new_index
+    * each new_index of which can have at most rowsPerPartition assuming random-ish hashing into the indices
+    * @param inMap A map of index to count of items in that index
+    * @param rowsPerPartition The maximum desired size per output index.
+    * @return A map of (index, sub_index)->new_index . The size of this map times rowsPerPartition is greater than
+    *         or equal to the number of events (sum of keys of inMap)
+    */
   def getSizedPartitionMap(inMap: Map[Long, Long], rowsPerPartition: Long): Map[(Long, Long), Int] = inMap
     .filter(_._2 > 0)
     .map(
@@ -380,8 +383,8 @@ object SerializedJsonStatic
 }
 
 /**
- * This is tricky. The type enforcing is only done at compile time. The JSON serde plays it fast and loose with the types
- */
+  * This is tricky. The type enforcing is only done at compile time. The JSON serde plays it fast and loose with the types
+  */
 @SerialVersionUID(713838456349L)
 class SerializedJson[A](inputDelegate: A) extends KryoSerializable with Serializable
 {
@@ -491,9 +494,9 @@ class DateBucketPartitioner(gran: Granularity, interval: Interval) extends Parti
     case null => throw new NullPointerException("Bad partition key")
     case (k: Long, v: Any) => getPartition(k)
     case (k: Long) => intervalMap.getOrElse(
-    gran.bucket(new DateTime(k)), {
-      throw new ISE("%s", "unknown bucket for datetime %s" format k)
-    }
+      gran.bucket(new DateTime(k)), {
+        throw new ISE("%s", "unknown bucket for datetime %s" format gran.bucket(new DateTime(k)))
+      }
     )
     case x => throw new IAE("%s", "Unknown type for %s" format x)
   }
@@ -511,16 +514,16 @@ class DateBucketAndHashPartitioner(gran: Granularity, interval: Interval, partMa
       val dateBucket = gran.truncate(new DateTime(k)).getMillis
       val modSize = maxTimePerBucket
         .getOrElse(
-        dateBucket.toLong, {
-          throw new ISE("%s", "bad date bucket [%s]. available: %s" format(dateBucket, maxTimePerBucket.keySet))
-        }
+          dateBucket.toLong, {
+            throw new ISE("%s", "bad date bucket [%s]. available: %s" format(dateBucket, maxTimePerBucket.keySet))
+          }
         )
       val hash = Math.abs(v.hashCode()) % modSize
       partMap
         .getOrElse(
-        (dateBucket.toLong, hash.toLong), {
-          throw new ISE("bad hash and bucket combo: (%s, %s)" format(dateBucket, hash))
-        }
+          (dateBucket.toLong, hash.toLong), {
+            throw new ISE("bad hash and bucket combo: (%s, %s)" format(dateBucket, hash))
+          }
         )
     case x => throw new IAE("%s", "Unknown type [%s]" format x)
   }
