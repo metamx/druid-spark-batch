@@ -46,7 +46,6 @@ import io.druid.server.DruidNode
 import io.druid.timeline.DataSegment
 import io.druid.timeline.partition.{NoneShardSpec, NumberedShardSpec}
 import org.apache.commons.io.FileUtils
-import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapreduce.TaskAttemptID
 import org.apache.hadoop.util.Progressable
@@ -74,7 +73,6 @@ object SparkDruidIndexer
     val dataSource = dataSchema.getDelegate.getDataSource
     log.info("Launching Spark task with jar version [%s]", getClass.getPackage.getImplementationVersion)
     val dataSegmentVersion = DateTime.now().toString
-    val hadoopConfig = new SerializedHadoopConfig(sc.hadoopConfiguration)
     val aggs: Array[SerializedJson[AggregatorFactory]] = dataSchema.getDelegate.getAggregators
       .map(x => new SerializedJson[AggregatorFactory](x))
     log.info("Starting caching of raw data for [%s] over interval [%s]", dataSource, ingestInterval)
@@ -120,7 +118,10 @@ object SparkDruidIndexer
         0.05,
         new DateBucketPartitioner(dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity, ingestInterval)
       )
-      .map(x => dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity.truncate(new DateTime(x._1)).getMillis -> x._2)
+      .map(
+        x => dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity.truncate(new DateTime(x._1))
+          .getMillis -> x._2
+      )
       .reduceByKey(_ + _)
       .collect().toMap
 
@@ -198,8 +199,8 @@ object SparkDruidIndexer
             }
           )
           try {
-            // Fail early if hadoop config is screwed up
-            val hadoopConf = hadoopConfig.getDelegate
+            // Only one SparkContext per JVM, and it should already be defined by the time we get to here
+            val hadoopConf = SparkContext.getOrCreate().hadoopConfiguration
             val outPath = new Path(outPathString)
             val hadoopFs = outPath.getFileSystem(hadoopConf)
             val dimensions = dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec.getDimensions
@@ -449,38 +450,6 @@ class SerializedJson[A](inputDelegate: A) extends KryoSerializable with Serializ
   def getDelegate = delegate
 }
 
-@SerialVersionUID(68710585891L)
-class SerializedHadoopConfig(delegate: Configuration) extends KryoSerializable with Serializable
-{
-  @transient var del = delegate
-
-  @throws[IOException]
-  private def writeObject(out: ObjectOutputStream) = {
-    SerializedJsonStatic.log.trace("Writing Hadoop Object")
-    del.write(out)
-  }
-
-  @throws[IOException]
-  @throws[ClassNotFoundException]
-  private def readObject(in: ObjectInputStream) = {
-    SerializedJsonStatic.log.trace("Reading Hadoop Object")
-    del = new Configuration()
-    del.readFields(in)
-  }
-
-  def getDelegate = del
-
-  override def write(kryo: Kryo, output: Output): Unit = {
-    SerializedJsonStatic.log.trace("Writing Hadoop Kryo")
-    writeObject(new ObjectOutputStream(output))
-  }
-
-  override def read(kryo: Kryo, input: Input): Unit = {
-    SerializedJsonStatic.log.trace("Reading Hadoop Kryo")
-    readObject(new ObjectInputStream(input))
-  }
-}
-
 class DateBucketPartitioner(gran: Granularity, interval: Interval) extends Partitioner
 {
   val intervalMap: Map[Long, Int] = gran.getIterable(interval)
@@ -519,7 +488,7 @@ class DateBucketAndHashPartitioner(gran: Granularity, interval: Interval, partMa
     case (k: Long, v: AnyRef) =>
       val dateBucket = gran.truncate(new DateTime(k)).getMillis
       val modSize = maxTimePerBucket.get(dateBucket.toLong)
-      if(modSize.isEmpty) {
+      if (modSize.isEmpty) {
         // Lazy ISE creation
         throw new ISE("%s", "bad date bucket [%s]. available: %s" format(dateBucket.toLong, maxTimePerBucket.keySet))
       }
