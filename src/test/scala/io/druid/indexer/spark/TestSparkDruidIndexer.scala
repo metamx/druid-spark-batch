@@ -41,7 +41,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
   import TestScalaBatchIndexTask._
 
   "The spark indexer" should "return proper DataSegments" in {
-    val data_file = this.getClass.getResource("/lineitem.small.tbl").toString
+    val data_files = Seq(this.getClass.getResource("/lineitem.small.tbl").toString, this.getClass.getResource("/empty.tbl").toString)
     val closer = Closer.create()
     val outDir = Files.createTempDirectory("segments").toFile
     (outDir.mkdirs() || outDir.exists()) && outDir.isDirectory should be(true)
@@ -74,7 +74,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         }
       )
       val loadResults = SparkDruidIndexer.loadData(
-        Seq(data_file),
+        data_files,
         new SerializedJson(dataSchema),
         interval,
         rowsPerPartition,
