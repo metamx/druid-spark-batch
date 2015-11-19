@@ -27,7 +27,7 @@ homepage := Some(url("https://github.com/metamx/druid-spark-batch"))
 scalaVersion := "2.10.5"
 crossScalaVersions := Seq("2.10.5", "2.11.7")
 
-// Requires 0.8.2 or later
+// Requires 0.8.2 or later and https://github.com/druid-io/druid/pull/1940
 val druid_version = "e0c8883"
 // This is just used here for Path, so anything that doesn't break spark should be fine
 val hadoop_version = "2.4.0"
