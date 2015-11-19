@@ -77,8 +77,7 @@ object SparkDruidIndexer
       .map(x => new SerializedJson[AggregatorFactory](x))
     log.info("Starting caching of raw data for [%s] over interval [%s]", dataSource, ingestInterval)
 
-    val baseData = sc
-      .union(dataFiles.map(sc.textFile(_)))
+    val baseData = sc.textFile(dataFiles mkString ",") // Hadoopify the data so it doesn't look so silly in Spark's DAG
       .mapPartitions(
         (it) => {
           val i = dataSchema.getDelegate.getParser match {
