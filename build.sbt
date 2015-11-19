@@ -28,7 +28,7 @@ scalaVersion := "2.10.5"
 crossScalaVersions := Seq("2.10.5", "2.11.7")
 
 // Requires 0.8.2 or later
-val druid_version = "f5737d6"
+val druid_version = "e0c8883"
 // This is just used here for Path, so anything that doesn't break spark should be fine
 val hadoop_version = "2.4.0"
 // Requires a patch for https://issues.apache.org/jira/browse/SPARK-11016
@@ -58,12 +58,12 @@ libraryDependencies += ("org.apache.hadoop" % "hadoop-client" % hadoop_version
   )
 
 libraryDependencies += "org.scalatest" %% "scalatest" % "2.2.4" % "test"
-libraryDependencies += "io.druid" % "druid-processing" % druid_version
-libraryDependencies += ("io.druid" % "druid-server" % druid_version
+libraryDependencies += "io.druid" % "druid-processing" % druid_version % "compile"
+libraryDependencies += ("io.druid" % "druid-server" % druid_version % "compile"
   excludeAll ExclusionRule(organization = "org.eclipse.jetty")
   )
-libraryDependencies += "io.druid" % "druid-indexing-service" % druid_version
-libraryDependencies += "io.druid" % "druid-indexing-hadoop" % druid_version
+libraryDependencies += "io.druid" % "druid-indexing-service" % druid_version % "compile"
+libraryDependencies += "io.druid" % "druid-indexing-hadoop" % druid_version % "compile"
 libraryDependencies += "com.sun.jersey" % "jersey-servlet" % "1.17.1"
 libraryDependencies += "org.xerial.snappy" % "snappy-java" % "1.1.2-M1"
 libraryDependencies += "org.joda" % "joda-convert" % "1.8.1" % "compile"
