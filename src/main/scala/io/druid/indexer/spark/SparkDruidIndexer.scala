@@ -109,7 +109,7 @@ object SparkDruidIndexer
         },
         preservesPartitioning = false
       )
-      .persist(StorageLevel.MEMORY_AND_DISK)
+      .persist(StorageLevel.DISK_ONLY)
 
     log.info("Starting uniqes")
     val partitionMap: Map[Long, Long] = baseData
