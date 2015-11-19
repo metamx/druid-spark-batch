@@ -244,7 +244,6 @@ object SparkBatchIndexTask
   private val DEFAULT_TARGET_PARTITION_SIZE: Long   = 5000000L
   private val CHILD_PROPERTY_PREFIX        : String = "druid.indexer.fork.property."
   val KRYO_CLASSES = Array(
-    classOf[SerializedHadoopConfig],
     classOf[SerializedJson[DataSegment]],
     classOf[SerializedJson[QueryGranularity]],
     classOf[SerializedJson[QueryGranularity]],
@@ -259,21 +258,21 @@ object SparkBatchIndexTask
   def runTask(args: java.util.ArrayList[String]): java.util.ArrayList[String] = {
     val task = SerializedJsonStatic.mapper.readValue(args.get(0), classOf[SparkBatchIndexTask])
     val conf = new SparkConf()
-    .setAppName(task.getId)
-    .setMaster(task.getMaster)
-    .set("spark.executor.memory", "7G")
-    .set("spark.executor.cores", "1")
-    .set("spark.kryo.referenceTracking", "false")
-    .set("user.timezone", "UTC")
-    .set("file.encoding", "UTF-8")
-    .set("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager")
-    .set("org.jboss.logging.provider", "slf4j")
-    .set("druid.processing.columnCache.sizeBytes", "1000000000")
-    .set("druid.extensions.searchCurrentClassloader", "true")
-    // registerKryoClasses already does the below two lines
-    //.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-    //.set("spark.kryo.classesToRegister", SparkBatchIndexTask.KRYO_CLASSES.map(_.getCanonicalName).mkString(","))
-    .registerKryoClasses(SparkBatchIndexTask.KRYO_CLASSES)
+      .setAppName(task.getId)
+      .setMaster(task.getMaster)
+      .set("spark.executor.memory", "7G")
+      .set("spark.executor.cores", "1")
+      .set("spark.kryo.referenceTracking", "false")
+      .set("user.timezone", "UTC")
+      .set("file.encoding", "UTF-8")
+      .set("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager")
+      .set("org.jboss.logging.provider", "slf4j")
+      .set("druid.processing.columnCache.sizeBytes", "1000000000")
+      .set("druid.extensions.searchCurrentClassloader", "true")
+      // registerKryoClasses already does the below two lines
+      //.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+      //.set("spark.kryo.classesToRegister", SparkBatchIndexTask.KRYO_CLASSES.map(_.getCanonicalName).mkString(","))
+      .registerKryoClasses(SparkBatchIndexTask.KRYO_CLASSES)
 
     System.getProperties.stringPropertyNames().filter(_.startsWith("io.druid")).foreach(
       x => {
