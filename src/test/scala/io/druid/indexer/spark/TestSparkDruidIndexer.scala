@@ -182,7 +182,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
   "The DateBucketAndHashPartitioner" should "properly partition single data" in {
     val interval = Interval.parse("1992/1993")
     val partitioner = new
-        DateBucketAndHashPartitioner(Granularity.YEAR, interval, Map((new DateTime("1992").getMillis, 0L) -> 0))
+        DateBucketAndHashPartitioner(Granularity.YEAR, Map((new DateTime("1992").getMillis, 0L) -> 0))
     partitioner.getPartition(makeEvent(interval.getStart)) should equal(0)
   }
 
@@ -191,7 +191,6 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
     val interval = Interval.parse("1992/1994")
     val partitioner = new DateBucketAndHashPartitioner(
       Granularity.YEAR,
-      interval,
       Map((new DateTime("1992").getMillis, 0L) -> 0, (new DateTime("1993").getMillis, 0L) -> 1)
     )
     partitioner.getPartition(makeEvent(interval.getStart)) should equal(0)
@@ -202,7 +201,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
     val interval = Interval.parse("1992/1994")
     val map = Map(new DateTime("1992").getMillis -> 100L, new DateTime("1993").getMillis -> 200L)
     val m = SparkDruidIndexer.getSizedPartitionMap(map, 150)
-    val partitioner = new DateBucketAndHashPartitioner(Granularity.YEAR, interval, m)
+    val partitioner = new DateBucketAndHashPartitioner(Granularity.YEAR, m)
     partitioner.getPartition(makeEvent(interval.getStart)) should equal(0)
     partitioner.getPartition(makeEvent(interval.getEnd.minus(10L))) should equal(1)
     partitioner.getPartition(makeEvent(interval.getEnd.minus(10L), "something else")) should equal(2)
@@ -256,6 +255,14 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
     m.size should equal(2)
     m.get((0L, 0L)) should equal(Some(0L))
     m.get((2L, 0L)) should equal(Some(1L))
+  }
+  "DateBucketAndHashPartitioner" should "handle min value hash" in {
+    val partitioner = new DateBucketAndHashPartitioner(Granularity.YEAR, Map[(Long, Long), Int]((0L, 0L) -> 1, (0L, 0L)->2))
+    partitioner.getPartition((100000L, new Object(){
+      override def hashCode() : Int =  {
+        Integer.MIN_VALUE
+      }
+    })) should be(2)
   }
 }
 
