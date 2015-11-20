@@ -89,6 +89,7 @@ object SparkDruidIndexer extends Logging
     log.info("Splitting [%s] gz bytes into [%s] partitions", totalGZSize, startingPartitions)
 
     val baseData = sc.textFile(dataFiles mkString ",") // Hadoopify the data so it doesn't look so silly in Spark's DAG
+      .repartition(startingPartitions)
       .mapPartitions(
         (it) => {
           val i = dataSchema.getDelegate.getParser match {
@@ -119,7 +120,6 @@ object SparkDruidIndexer extends Logging
         },
         preservesPartitioning = false
       )
-      .repartition(startingPartitions)
       .persist(StorageLevel.DISK_ONLY)
 
     log.info("Starting uniqes")
