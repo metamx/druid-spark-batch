@@ -36,6 +36,8 @@ import io.druid.segment.IndexSpec
 import io.druid.segment.data.RoaringBitmapSerdeFactory
 import io.druid.segment.indexing.DataSchema
 import io.druid.segment.indexing.granularity.{GranularitySpec, UniformGranularitySpec}
+import org.apache.spark.sql.{SQLContext, DataFrame}
+import org.apache.spark.sql.types._
 import org.joda.time.Interval
 import org.scalatest.{FlatSpec, Matchers}
 
@@ -141,6 +143,45 @@ object TestScalaBatchIndexTask
   val dataSchema      = buildDataSchema()
   val indexSpec       = new IndexSpec()
   val classpathPrefix = "somePrefix.jar"
+
+  val lineItemSchema : StructType = StructType(Array(
+    StructField("l_orderkey", IntegerType),
+    StructField("l_partkey", IntegerType),
+    StructField("l_suppkey", IntegerType),
+    StructField("l_linenumber", IntegerType),
+    StructField("l_quantity", DoubleType),
+    StructField("l_extendedprice", DoubleType),
+    StructField("l_discount", DoubleType),
+    StructField("l_tax", DoubleType),
+    StructField("l_returnflag", StringType),
+    StructField("l_linestatus", StringType),
+    StructField("l_shipdate", StringType),
+    StructField("l_commitdate", StringType),
+    StructField("l_receiptdate", StringType),
+    StructField("l_shipinstruct", StringType),
+    StructField("l_shipmode", StringType),
+    StructField("l_comment", StringType)
+  ))
+
+  def lineItemDF(fileName : String)(implicit sqlContext : SQLContext) : DataFrame = {
+
+    import org.apache.spark.sql._
+    val rdd = sqlContext.sparkContext.textFile(fileName).map(
+      _.split("\\|")).map(p => {
+      val vals = lineItemSchema.fields.zipWithIndex.map {
+        case(StructField(_, IntegerType, _, _), i) => p(i).trim.toInt
+        case(StructField(_, DoubleType, _, _), i) => p(i).trim.toDouble
+        case(StructField(_, StringType, _, _), i) => p(i)
+        case (f, i) => throw new RuntimeException(s"${f.dataType} not yet supported in tests")
+      }
+      Row(vals:_*)
+    })
+
+    sqlContext.createDataFrame(
+      rdd,
+      lineItemSchema
+    )
+  }
 
   def buildDataSchema(
     dataSource: String = dataSource,

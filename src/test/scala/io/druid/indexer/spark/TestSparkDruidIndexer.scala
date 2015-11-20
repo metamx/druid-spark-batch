@@ -26,6 +26,7 @@ import com.google.common.io.Closer
 import com.metamx.common.logger.Logger
 import com.metamx.common.{CompressionUtils, Granularity, IAE}
 import io.druid.common.utils.JodaUtils
+import io.druid.indexer.spark2.TestSQLContext
 import io.druid.segment.{IndexIO, QueryableIndexIndexableAdapter}
 import org.apache.commons.io.FileUtils
 import org.apache.spark.{SparkConf, SparkContext}
@@ -66,13 +67,13 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         .set("spark.kryo.referenceTracking", "false")
         .registerKryoClasses(SparkBatchIndexTask.KRYO_CLASSES)
 
-      val sc = new SparkContext(conf)
-      closer.register(
-        new Closeable
-        {
-          override def close(): Unit = sc.stop()
-        }
-      )
+      val sc = TestSQLContext.sparkContext // SparkContext(conf)
+//      closer.register(
+//        new Closeable
+//        {
+//          override def close(): Unit = sc.stop()
+//        }
+//      )
       val loadResults = SparkDruidIndexer.loadData(
         data_files,
         new SerializedJson(dataSchema),
