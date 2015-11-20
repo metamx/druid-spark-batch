@@ -146,7 +146,6 @@ object SparkDruidIndexer
       .partitionBy(
         new DateBucketAndHashPartitioner(
           dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity,
-          ingestInterval,
           hashToPartitionMap
         )
       )
@@ -476,7 +475,7 @@ class DateBucketPartitioner(gran: Granularity, interval: Interval) extends Parti
   }
 }
 
-class DateBucketAndHashPartitioner(gran: Granularity, interval: Interval, partMap: Map[(Long, Long), Int])
+class DateBucketAndHashPartitioner(gran: Granularity, partMap: Map[(Long, Long), Int])
   extends Partitioner
 {
   val maxTimePerBucket = partMap.groupBy(_._1._1).map(e => e._1 -> e._2.size)
@@ -491,13 +490,16 @@ class DateBucketAndHashPartitioner(gran: Granularity, interval: Interval, partMa
         // Lazy ISE creation
         throw new ISE("%s", "bad date bucket [%s]. available: %s" format(dateBucket.toLong, maxTimePerBucket.keySet))
       }
-      val hash = Math.abs(v.hashCode()) % modSize.get
-      partMap
-        .getOrElse(
-          (dateBucket.toLong, hash.toLong), {
-            throw new ISE("bad hash and bucket combo: (%s, %s)" format(dateBucket, hash))
-          }
-        )
+      val m = modSize.get
+      if (m <= 0) {
+        throw new ISE("%s", "Illegal mod [%s]" format m)
+      }
+      val hash = Math.abs(v.hashCode().toLong) % m.toLong
+      val partOpt = partMap.get((dateBucket.toLong, hash.toLong))
+      if (partOpt.isEmpty) {
+        throw new ISE("bad hash and bucket combo: (%s, %s)" format(dateBucket, hash))
+      }
+      partOpt.get
     case x => throw new IAE("%s", "Unknown type [%s]" format x)
   }
 }

@@ -94,3 +94,6 @@ pomExtra := (
 )
 
 testOptions += Tests.Argument(TestFrameworks.JUnit, "-Duser.timezone=UTC")
+// WTF SBT?
+javaOptions in Test += "-Duser.timezone=UTC"
+fork in Test := true
