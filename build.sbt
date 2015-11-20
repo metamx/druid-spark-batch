@@ -33,6 +33,7 @@ val druid_version = "e0c8883"
 val hadoop_version = "2.4.0"
 // Requires a patch for https://issues.apache.org/jira/browse/SPARK-11016
 val spark_version = "1.5.1-mmx2"
+val guava_version = "16.0.1"
 
 // Use Spark's jetty version instead of Druid's to prevent class collisions
 val sparkEclipseJettyVersion = "8.1.14.v20131031"
@@ -64,9 +65,11 @@ libraryDependencies += ("io.druid" % "druid-server" % druid_version % "compile"
   )
 libraryDependencies += "io.druid" % "druid-indexing-service" % druid_version % "compile"
 libraryDependencies += "io.druid" % "druid-indexing-hadoop" % druid_version % "compile"
+libraryDependencies += "org.joda" % "joda-convert" % "1.8.1" % "compile" // Prevents intellij silliness and sbt warnings
+libraryDependencies += "com.google.guava" % "guava" % guava_version // Prevents serde problems for guice exceptions
 libraryDependencies += "com.sun.jersey" % "jersey-servlet" % "1.17.1"
 libraryDependencies += "org.xerial.snappy" % "snappy-java" % "1.1.2-M1"
-libraryDependencies += "org.joda" % "joda-convert" % "1.8.1" % "compile"
+libraryDependencies += "com.metamx" %% "scala-util" % "1.11.7"
 libraryDependencies ++= explicitDependencies
 
 
