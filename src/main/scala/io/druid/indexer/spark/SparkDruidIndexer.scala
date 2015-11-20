@@ -79,6 +79,17 @@ object SparkDruidIndexer
       .map(x => new SerializedJson[AggregatorFactory](x))
     log.info("Starting caching of raw data for [%s] over interval [%s]", dataSource, ingestInterval)
 
+    val totalGZSize = dataFiles.map(
+      s => {
+        val p = new Path(s)
+        val fs = p.getFileSystem(sc.hadoopConfiguration)
+        fs.getFileStatus(p).getLen
+      }
+    ).sum
+    val startingPartitions = (totalGZSize / (100L << 20)).toInt + 1
+
+    log.info("%s", "Splitting [%s] gz bytes into [%s] partitions" format (totalGZSize, startingPartitions))
+
     val baseData = sc.textFile(dataFiles mkString ",") // Hadoopify the data so it doesn't look so silly in Spark's DAG
       .mapPartitions(
         (it) => {
@@ -111,6 +122,7 @@ object SparkDruidIndexer
         },
         preservesPartitioning = false
       )
+      .repartition(startingPartitions)
       .persist(StorageLevel.DISK_ONLY)
 
     log.info("Starting uniqes")
