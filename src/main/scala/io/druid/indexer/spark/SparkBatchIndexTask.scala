@@ -85,10 +85,13 @@ class SparkBatchIndexTask(
   },
   dataSchema.getDataSource,
   List[String](
-    // TODO: better handle scala version here
-    "%s:%s_2.10:%s" format
-      (classOf[SparkBatchIndexTask].getPackage.getImplementationVendor, classOf[SparkBatchIndexTask].getPackage
-        .getImplementationTitle, classOf[SparkBatchIndexTask].getPackage.getImplementationVersion)
+    "%s:%s_%s:%s" format
+      (
+        classOf[SparkBatchIndexTask].getPackage.getImplementationVendor,
+        classOf[SparkBatchIndexTask].getPackage.getImplementationTitle,
+        scala.util.Properties.scalaPropOrElse("version.number", "2.10").split("\\.").slice(0, 2).mkString("."),
+        classOf[SparkBatchIndexTask].getPackage.getImplementationVersion
+      )
   ),
   if (context == null) {
     Map[String, String]()
