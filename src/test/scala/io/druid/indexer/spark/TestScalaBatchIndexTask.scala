@@ -19,34 +19,47 @@
 
 package io.druid.indexer.spark
 
+import java.util
 import java.util.Properties
 
+import com.fasterxml.jackson.annotation.{JsonCreator, JsonProperty}
 import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.jsontype.NamedType
 import com.google.inject.name.Names
 import com.google.inject.{Binder, Module}
 import com.metamx.common.Granularity
 import io.druid.data.input.impl._
 import io.druid.granularity.QueryGranularity
 import io.druid.guice.GuiceInjectors
+import io.druid.indexing.common.actions.{TaskAction, TaskActionClient}
 import io.druid.indexing.common.task.Task
+import io.druid.indexing.common.{TaskLock, TaskToolbox}
 import io.druid.initialization.Initialization
 import io.druid.query.aggregation.{AggregatorFactory, CountAggregatorFactory, DoubleSumAggregatorFactory, LongSumAggregatorFactory}
 import io.druid.segment.IndexSpec
 import io.druid.segment.data.RoaringBitmapSerdeFactory
 import io.druid.segment.indexing.DataSchema
 import io.druid.segment.indexing.granularity.{GranularitySpec, UniformGranularitySpec}
+import io.druid.segment.loading.DataSegmentPusher
+import io.druid.timeline.DataSegment
+import io.druid.timeline.partition.NoneShardSpec
+import org.apache.spark.Logging
+import org.easymock.EasyMock
 import org.joda.time.Interval
+import org.scalatest.mock.EasyMockSugar
 import org.scalatest.{FlatSpec, Matchers}
 
 import scala.collection.JavaConversions._
+import scala.util.control.NonFatal
 
 object TestScalaBatchIndexTask
 {
   val injector                                 = Initialization
     .makeInjectorWithModules(
       GuiceInjectors.makeStartupInjector(), List[Module](
-        new Module {
+        new Module
+        {
           override def configure(binder: Binder): Unit = {
             binder.bindConstant.annotatedWith(Names.named("serviceName")).to("druid/test")
             binder.bindConstant.annotatedWith(Names.named("servicePort")).to(0)
@@ -59,6 +72,8 @@ object TestScalaBatchIndexTask
   val dataSource                               = "defaultDataSource"
   val interval                                 = Interval.parse("1992/1999")
   val dataFiles                                = Seq("file:/someFile")
+  val version                                  = "version"
+  val basePath                                 = "hdfs://test:9090/base/path"
   val parseSpec                                = new DelimitedParseSpec(
     new TimestampSpec("l_shipdate", "yyyy-MM-dd", null),
     new DimensionsSpec(
@@ -137,10 +152,21 @@ object TestScalaBatchIndexTask
   }
   val master                                   = "local[999]"
 
-  val granSpec        = new UniformGranularitySpec(Granularity.YEAR, QueryGranularity.DAY, Seq(interval))
-  val dataSchema      = buildDataSchema()
-  val indexSpec       = new IndexSpec()
-  val classpathPrefix = "somePrefix.jar"
+  val granSpec          = new UniformGranularitySpec(Granularity.YEAR, QueryGranularity.DAY, Seq(interval))
+  val dataSchema        = buildDataSchema()
+  val indexSpec         = new IndexSpec()
+  val classpathPrefix   = "somePrefix.jar"
+  val simpleDataSegment = DataSegment.builder()
+    .binaryVersion(9)
+    .version(version)
+    .dataSource(dataSchema.getDataSource)
+    .dimensions(dataSchema.getParser.getParseSpec.getDimensionsSpec.getDimensions)
+    .interval(interval)
+    .loadSpec(Map[String, Object]())
+    .metrics(aggFactories.map(_.getName))
+    .shardSpec(new NoneShardSpec)
+    .size(1)
+    .build()
 
   def buildDataSchema(
     dataSource: String = dataSource,
@@ -148,7 +174,7 @@ object TestScalaBatchIndexTask
     aggFactories: Seq[AggregatorFactory] = aggFactories,
     granSpec: GranularitySpec = granSpec,
     mapper: ObjectMapper = objectMapper
-    ) = new DataSchema(
+  ) = new DataSchema(
     dataSource,
     objectMapper
       .convertValue(new StringInputRowParser(parseSpec, null), new TypeReference[java.util.Map[String, Any]]() {}),
@@ -169,7 +195,7 @@ object TestScalaBatchIndexTask
     context: Map[String, Object] = Map(),
     indexSpec: IndexSpec = indexSpec,
     classpathPrefix: String = classpathPrefix
-    ): SparkBatchIndexTask = new SparkBatchIndexTask(
+  ): SparkBatchIndexTask = new SparkBatchIndexTask(
     id,
     dataSchema,
     Seq(interval),
@@ -184,7 +210,7 @@ object TestScalaBatchIndexTask
   )
 }
 
-class TestScalaBatchIndexTask extends FlatSpec with Matchers
+class TestScalaBatchIndexTask extends FlatSpec with Matchers with EasyMockSugar with Logging
 {
 
   import TestScalaBatchIndexTask._
@@ -259,4 +285,74 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
 
     task1 should not equal buildSparkBatchIndexTask(classpathPrefix = "someOther.jar")
   }
+
+  "run" should "pass correct invoker properties" in {
+    val baseTask = buildSparkBatchIndexTask()
+    val toolbox = mock[TaskToolbox]
+    val taskActionClient = mock[TaskActionClient]
+    call(taskActionClient.submit(EasyMock.anyObject(classOf[TaskAction[util.List[TaskLock]]])))
+      .andReturn(List(new TaskLock(taskId, taskId, interval, version))).once()
+    call(toolbox.getTaskActionClient).andReturn(taskActionClient).once()
+
+    val pusher = mock[DataSegmentPusher]
+    call(pusher.getPathForHadoop(EasyMock.anyString())).andReturn(basePath).once()
+    call(toolbox.getSegmentPusher).andReturn(pusher).once()
+    call(toolbox.pushSegments(EasyMock.anyObject[java.lang.Iterable[DataSegment]]())).atLeastOnce()
+    val task = new SparkBatchProxy(baseTask)
+    SerializedJsonStatic.mapper.registerSubtypes(new NamedType(classOf[SparkBatchProxy], "test_spark_task"))
+    whenExecuting(pusher, toolbox, taskActionClient) {
+      val result = task.run(toolbox)
+      result.isComplete should be(true)
+      result.isSuccess should be(true)
+    }
+  }
+}
+
+@JsonCreator
+class SparkBatchProxy(
+  @JsonProperty("baseTask") baseTask: SparkBatchIndexTask
+) extends SparkBatchIndexTask(
+  baseTask.getId,
+  baseTask.getDataSchema,
+  baseTask.getIntervals,
+  baseTask.getDataFiles,
+  baseTask.getTargetPartitionSize,
+  baseTask.getRowFlushBoundary,
+  baseTask.getProperties,
+  baseTask.getMaster,
+  baseTask.getContext,
+  baseTask.getIndexSpec,
+  baseTask.getClasspathPrefix,
+  List()
+) with Matchers
+{
+  override def invokeRunner(args: util.ArrayList[String], classLoader: ClassLoader): util.ArrayList[String] = {
+    try {
+      args.get(0).isEmpty shouldBe false
+      val passedTask: Task =
+        SerializedJsonStatic.mapper.readValue(
+          args.get(0),
+          classOf[Task]
+        )
+
+      /* Doesn't work right yet
+      passedTask shouldEqual baseTask
+      */
+      args.get(1) shouldEqual TestScalaBatchIndexTask.version
+      args.get(2) shouldEqual TestScalaBatchIndexTask.basePath
+      new util.ArrayList[String](
+        Seq(TestScalaBatchIndexTask.simpleDataSegment)
+          .map(SerializedJsonStatic.mapper.writeValueAsString).toList
+      )
+    }
+    catch {
+      case NonFatal(e) => {
+        log.error(e, "Task failed")
+        throw e
+      }
+    }
+  }
+
+  @JsonProperty("baseTask")
+  def getBaseTask = baseTask
 }

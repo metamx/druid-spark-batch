@@ -70,6 +70,7 @@ libraryDependencies += "com.google.guava" % "guava" % guava_version // Prevents 
 libraryDependencies += "com.sun.jersey" % "jersey-servlet" % "1.17.1"
 libraryDependencies += "org.xerial.snappy" % "snappy-java" % "1.1.2-M1"
 libraryDependencies += "com.metamx" %% "scala-util" % "1.11.7"
+libraryDependencies += "org.easymock" % "easymock" % "3.4" % "test"
 libraryDependencies ++= explicitDependencies
 
 

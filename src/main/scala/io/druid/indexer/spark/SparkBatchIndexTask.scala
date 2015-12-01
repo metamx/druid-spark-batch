@@ -29,6 +29,7 @@ import com.google.common.base.{Preconditions, Strings}
 import com.google.common.collect.Iterables
 import com.google.inject.Injector
 import com.metamx.common.logger.Logger
+import com.metamx.common.scala.Logging
 import io.druid.common.utils.JodaUtils
 import io.druid.data.input.impl.ParseSpec
 import io.druid.granularity.QueryGranularity
@@ -46,6 +47,7 @@ import org.apache.spark.{SparkConf, SparkContext}
 import org.joda.time.Interval
 
 import scala.collection.JavaConversions._
+import scala.util.control.NonFatal
 
 @JsonCreator
 class SparkBatchIndexTask(
@@ -70,7 +72,9 @@ class SparkBatchIndexTask(
   @JsonProperty("indexSpec")
   indexSpec: IndexSpec = new IndexSpec(),
   @JsonProperty("classpathPrefix")
-  classpathPrefix: String = null
+  classpathPrefix: String = null,
+  @JsonProperty("hadoopDependencyCoordinates") // Only for unit tests
+  hadoopDependencyCoordinates: util.List[String] = null
 ) extends HadoopTask(
   if (id == null) {
     AbstractTask
@@ -84,24 +88,27 @@ class SparkBatchIndexTask(
     id
   },
   dataSchema.getDataSource,
-  List[String](
-    "%s:%s_%s:%s" format
-      (
-        classOf[SparkBatchIndexTask].getPackage.getImplementationVendor,
-        classOf[SparkBatchIndexTask].getPackage.getImplementationTitle,
-        scala.util.Properties.scalaPropOrElse("version.number", "2.10").split("\\.").slice(0, 2).mkString("."),
-        classOf[SparkBatchIndexTask].getPackage.getImplementationVersion
-      )
-  ),
+  if (hadoopDependencyCoordinates == null) {
+    List[String](
+      "%s:%s_%s:%s" format
+        (
+          classOf[SparkBatchIndexTask].getPackage.getImplementationVendor,
+          classOf[SparkBatchIndexTask].getPackage.getImplementationTitle,
+          scala.util.Properties.scalaPropOrElse("version.number", "2.10").split("\\.").slice(0, 2).mkString("."),
+          classOf[SparkBatchIndexTask].getPackage.getImplementationVersion
+          )
+    )
+  } else {
+    hadoopDependencyCoordinates
+  },
   if (context == null) {
     Map[String, String]()
   }
   else {
     context
   }
-)
+) with Logging
 {
-  val log                  : Logger                            = new Logger(classOf[SparkBatchIndexTask])
   val properties_          : Properties                        =
     if (properties == null) {
       new Properties()
@@ -157,8 +164,7 @@ class SparkBatchIndexTask(
       val task = SerializedJsonStatic.mapper.writeValueAsString(this)
       log.debug("Sending task `%s`", task)
 
-      val result = HadoopTask.invokeForeignLoader[util.ArrayList[String], util.ArrayList[String]](
-        "io.druid.indexer.spark.Runner",
+      val result = invokeRunner(
         new util.ArrayList(List(task, Iterables.getOnlyElement(getTaskLocks(toolbox)).getVersion, outputPath)),
         classLoader
       )
@@ -166,12 +172,23 @@ class SparkBatchIndexTask(
       status = Option.apply(TaskStatus.success(getId))
     }
     catch {
-      case e: Throwable => log.error(e, "%s", "Error running task [%s]" format getId)
+      case NonFatal(e) => {
+        log.error(e, "Error running task [%s]", getId)
+      }
     }
     status match {
       case Some(x) => x
       case None => TaskStatus.failure(getId)
     }
+  }
+
+  // Protected for unit tests
+  protected def invokeRunner(args: util.ArrayList[String], classLoader: ClassLoader): util.ArrayList[String] = {
+    HadoopTask.invokeForeignLoader[util.ArrayList[String], util.ArrayList[String]](
+      "io.druid.indexer.spark.Runner",
+      args,
+      classLoader
+    )
   }
 
   override def equals(o: Any): Boolean = {
