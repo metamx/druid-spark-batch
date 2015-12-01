@@ -283,7 +283,18 @@ object SparkBatchIndexTask
     //.set("spark.kryo.classesToRegister", SparkBatchIndexTask.KRYO_CLASSES.map(_.getCanonicalName).mkString(","))
     .registerKryoClasses(SparkBatchIndexTask.KRYO_CLASSES)
 
-    System.getProperties.stringPropertyNames().filter(_.startsWith("io.druid")).foreach(
+    // See io.druid.indexing.overlord.config.ForkingTaskRunnerConfig.allowedPrefixes
+    // We don't include tmp.dir
+    // user.timezone and file.encoding are set above
+    val allowedPrefixes = Seq(
+      "com.metamx",
+      "druid",
+      "io.druid",
+      "hadoop"
+    )
+    System.getProperties.stringPropertyNames().filter(x => {
+      allowedPrefixes.exists(x.startsWith)
+    }).foreach(
       x => {
         log.debug("Setting io.druid property [%s]", x)
         conf.set(x, System.getProperty(x))
