@@ -89,7 +89,7 @@ class SparkBatchIndexTask(
       (
         classOf[SparkBatchIndexTask].getPackage.getImplementationVendor,
         classOf[SparkBatchIndexTask].getPackage.getImplementationTitle,
-        scala.util.Properties.scalaPropOrElse("version.number", "2.10").split("\\.").slice(0, 2).mkString("."),
+        SparkBatchIndexTask.SCALA_VERSION,
         classOf[SparkBatchIndexTask].getPackage.getImplementationVersion
       )
   ),
@@ -246,6 +246,11 @@ object SparkBatchIndexTask
   private val DEFAULT_ROW_FLUSH_BOUNDARY   : Int    = 80000
   private val DEFAULT_TARGET_PARTITION_SIZE: Long   = 5000000L
   private val CHILD_PROPERTY_PREFIX        : String = "druid.indexer.fork.property."
+  private val SCALA_VERSION_REGEX = """$(\d+\.\d+)""".r
+  val SCALA_VERSION : String = scala.util.Properties.versionNumberString match {
+    case SCALA_VERSION_REGEX(major) => major
+    case _ => "2.10"
+  }
   val KRYO_CLASSES = Array(
     classOf[SerializedHadoopConfig],
     classOf[SerializedJson[DataSegment]],
