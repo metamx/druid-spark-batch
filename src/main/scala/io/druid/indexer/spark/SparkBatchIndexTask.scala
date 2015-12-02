@@ -28,6 +28,7 @@ import com.fasterxml.jackson.annotation.{JsonCreator, JsonProperty}
 import com.google.common.base.{Preconditions, Strings}
 import com.google.common.collect.Iterables
 import com.google.inject.Injector
+import com.metamx.common.Granularity
 import com.metamx.common.logger.Logger
 import io.druid.common.utils.JodaUtils
 import io.druid.data.input.impl.ParseSpec
@@ -91,7 +92,7 @@ class SparkBatchIndexTask(
         classOf[SparkBatchIndexTask].getPackage.getImplementationTitle,
         SparkBatchIndexTask.SCALA_VERSION,
         classOf[SparkBatchIndexTask].getPackage.getImplementationVersion
-      )
+        )
   ),
   if (context == null) {
     Map[String, String]()
@@ -198,9 +199,13 @@ class SparkBatchIndexTask(
       Objects.equals(getClasspathPrefix, other.getClasspathPrefix)
   }
 
+  // This is kind of weird to get a lock that's not based on granularityIntervals but its how the hadoop indexer did it
+  // So we maintain that behavior for now
+  lazy val lockInterval: Interval = JodaUtils.umbrellaInterval(JodaUtils.condenseIntervals(intervals))
+
   @throws(classOf[Exception])
   override def isReady(taskActionClient: TaskActionClient): Boolean = taskActionClient
-    .submit(new LockTryAcquireAction(totalInterval))
+    .submit(new LockTryAcquireAction(lockInterval))
     .isPresent
 
   @JsonProperty("id")
@@ -233,8 +238,6 @@ class SparkBatchIndexTask(
   @JsonProperty("indexSpec")
   def getIndexSpec = indexSpec_
 
-  lazy val totalInterval: Interval = JodaUtils.umbrellaInterval(JodaUtils.condenseIntervals(intervals))
-
   @JsonProperty("classpathPrefix")
   override def getClasspathPrefix = classpathPrefix
 
@@ -246,12 +249,12 @@ object SparkBatchIndexTask
   private val DEFAULT_ROW_FLUSH_BOUNDARY   : Int    = 80000
   private val DEFAULT_TARGET_PARTITION_SIZE: Long   = 5000000L
   private val CHILD_PROPERTY_PREFIX        : String = "druid.indexer.fork.property."
-  private val SCALA_VERSION_REGEX = """$(\d+\.\d+)""".r
-  val SCALA_VERSION : String = scala.util.Properties.versionNumberString match {
+  private val SCALA_VERSION_REGEX                   = """$(\d+\.\d+)""".r
+  val SCALA_VERSION: String = scala.util.Properties.versionNumberString match {
     case SCALA_VERSION_REGEX(major) => major
     case _ => "2.10"
   }
-  val KRYO_CLASSES = Array(
+  val KRYO_CLASSES          = Array(
     classOf[SerializedHadoopConfig],
     classOf[SerializedJson[DataSegment]],
     classOf[SerializedJson[QueryGranularity]],
@@ -261,27 +264,31 @@ object SparkBatchIndexTask
     classOf[SerializedJson[IndexSpec]],
     classOf[SerializedJson[DataSchema]]
   ).asInstanceOf[Array[Class[_]]]
-  val log          = new Logger(SparkBatchIndexTask.getClass)
-  val TASK_TYPE    = "index_spark"
+  val log                   = new Logger(SparkBatchIndexTask.getClass)
+  val TASK_TYPE             = "index_spark"
+
+  def mapToSegmentIntervals(originalIntervals: Iterable[Interval], granularity: Granularity): Iterable[Interval] = {
+    originalIntervals.map(x => iterableAsScalaIterable(granularity.getIterable(x))).reduce(_ ++ _)
+  }
 
   def runTask(args: java.util.ArrayList[String]): java.util.ArrayList[String] = {
     val task = SerializedJsonStatic.mapper.readValue(args.get(0), classOf[SparkBatchIndexTask])
     val conf = new SparkConf()
-    .setAppName(task.getId)
-    .setMaster(task.getMaster)
-    .set("spark.executor.memory", "7G")
-    .set("spark.executor.cores", "1")
-    .set("spark.kryo.referenceTracking", "false")
-    .set("user.timezone", "UTC")
-    .set("file.encoding", "UTF-8")
-    .set("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager")
-    .set("org.jboss.logging.provider", "slf4j")
-    .set("druid.processing.columnCache.sizeBytes", "1000000000")
-    .set("druid.extensions.searchCurrentClassloader", "true")
-    // registerKryoClasses already does the below two lines
-    //.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-    //.set("spark.kryo.classesToRegister", SparkBatchIndexTask.KRYO_CLASSES.map(_.getCanonicalName).mkString(","))
-    .registerKryoClasses(SparkBatchIndexTask.KRYO_CLASSES)
+      .setAppName(task.getId)
+      .setMaster(task.getMaster)
+      .set("spark.executor.memory", "7G")
+      .set("spark.executor.cores", "1")
+      .set("spark.kryo.referenceTracking", "false")
+      .set("user.timezone", "UTC")
+      .set("file.encoding", "UTF-8")
+      .set("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager")
+      .set("org.jboss.logging.provider", "slf4j")
+      .set("druid.processing.columnCache.sizeBytes", "1000000000")
+      .set("druid.extensions.searchCurrentClassloader", "true")
+      // registerKryoClasses already does the below two lines
+      //.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+      //.set("spark.kryo.classesToRegister", SparkBatchIndexTask.KRYO_CLASSES.map(_.getCanonicalName).mkString(","))
+      .registerKryoClasses(SparkBatchIndexTask.KRYO_CLASSES)
 
     // See io.druid.indexing.overlord.config.ForkingTaskRunnerConfig.allowedPrefixes
     // We don't include tmp.dir
@@ -292,9 +299,11 @@ object SparkBatchIndexTask
       "io.druid",
       "hadoop"
     )
-    System.getProperties.stringPropertyNames().filter(x => {
-      allowedPrefixes.exists(x.startsWith)
-    }).foreach(
+    System.getProperties.stringPropertyNames().filter(
+      x => {
+        allowedPrefixes.exists(x.startsWith)
+      }
+    ).foreach(
       x => {
         log.debug("Setting io.druid property [%s]", x)
         conf.set(x, System.getProperty(x))
@@ -368,7 +377,8 @@ object SparkBatchIndexTask
       val dataSegments = SparkDruidIndexer.loadData(
         task.getDataFiles,
         new SerializedJson[DataSchema](task.getDataSchema),
-        task.totalInterval,
+        SparkBatchIndexTask
+          .mapToSegmentIntervals(task.getIntervals, task.getDataSchema.getGranularitySpec.getSegmentGranularity),
         task.getTargetPartitionSize,
         task.getRowFlushBoundary,
         outputPath,
