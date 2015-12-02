@@ -61,7 +61,7 @@ object SparkDruidIndexer extends Logging
   def loadData(
     dataFiles: Seq[String],
     dataSchema: SerializedJson[DataSchema],
-    ingestInterval: Interval,
+    ingestIntervals : Iterable[Interval],
     rowsPerPartition: Long,
     rowsPerPersist: Int,
     outPathString: String,
@@ -75,7 +75,8 @@ object SparkDruidIndexer extends Logging
     val hadoopConfig = new SerializedHadoopConfig(sc.hadoopConfiguration)
     val aggs: Array[SerializedJson[AggregatorFactory]] = dataSchema.getDelegate.getAggregators
       .map(x => new SerializedJson[AggregatorFactory](x))
-    log.info("Starting caching of raw data for [%s] over interval [%s]", dataSource, ingestInterval)
+    log.info("Starting caching of raw data for [%s] over intervals [%s]", dataSource, ingestIntervals)
+    val passableIntervals = ingestIntervals.foldLeft(Seq[Interval]())((a, b) => a ++ Seq(b)) // Materialize for passing
 
     val totalGZSize = dataFiles.map(
       s => {
@@ -100,11 +101,12 @@ object SparkDruidIndexer extends Logging
             case x =>
               log
                 .warn(
-                  "Could not figure out how to handle class [%s]. Hoping it can handle string input", x.getClass.getCanonicalName
+                  "Could not figure out how to handle class [%s]. Hoping it can handle string input",
+                  x.getClass.getCanonicalName
                 )
               it.map(x.asInstanceOf[InputRowParser[Any]].parse)
           }
-          i.filter(r => ingestInterval.contains(r.getTimestamp))
+          i.filter(r => passableIntervals.exists(_.contains(r.getTimestamp)))
             .map(
               r => {
                 val queryGran = dataSchema.getDelegate.getGranularitySpec.getQueryGranularity
@@ -126,9 +128,12 @@ object SparkDruidIndexer extends Logging
     val partitionMap: Map[Long, Long] = baseData
       .countApproxDistinctByKey(
         0.05,
-        new DateBucketPartitioner(dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity, ingestInterval)
+        new DateBucketPartitioner(dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity, passableIntervals)
       )
-      .map(x => dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity.truncate(new DateTime(x._1)).getMillis -> x._2)
+      .map(
+        x => dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity.truncate(new DateTime(x._1))
+          .getMillis -> x._2
+      )
       .reduceByKey(_ + _)
       .collect().toMap
 
@@ -141,7 +146,7 @@ object SparkDruidIndexer extends Logging
         log
           .info(
             "Date Bucket [%s] with partition number [%s] has total partition number [%s]",
-              a._1._1, a._1._2, a._2
+            a._1._1, a._1._2, a._2
           )
       }
     }
@@ -173,8 +178,7 @@ object SparkDruidIndexer extends Logging
           }
           val partitionNum = partitionNums.head
           val timeBucket = hashToPartitionMap.filter(_._2 == index).map(_._1._1).head
-          val timeInterval = dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity.getIterable(ingestInterval)
-            .toSeq.filter(_.getStart.getMillis == timeBucket).head
+          val timeInterval = passableIntervals.filter(_.getStart.getMillis == timeBucket).head
           log.info("Creating index [%s] for date range [%s]", partitionNum, timeInterval)
           val partitionCount = hashToPartitionMap.count(_._1._1 == timeBucket)
 
@@ -348,7 +352,7 @@ object SparkDruidIndexer extends Logging
 
 object SerializedJsonStatic extends Logging
 {
-  lazy val injector: Injector     = {
+  lazy val injector: Injector = {
     try {
       Initialization.makeInjectorWithModules(
         GuiceInjectors.makeStartupInjector(), List[Module](
@@ -405,7 +409,8 @@ object SerializedJsonStatic extends Logging
 }
 
 /**
-  * This is tricky. The type enforcing is only done at compile time. The JSON serde plays it fast and loose with the types
+  * This is tricky. The type enforcing is only done at compile time. The JSON serde plays it fast and
+  * loose with the types
   */
 @SerialVersionUID(713838456349L)
 class SerializedJson[A](inputDelegate: A) extends KryoSerializable with Serializable
@@ -452,7 +457,10 @@ class SerializedJson[A](inputDelegate: A) extends KryoSerializable with Serializ
   def fillFromMap(m: Map[String, Object]): Unit = {
     val clazzName: Class[_] = m.get("class") match {
       case Some(cn) => if (Thread.currentThread().getContextClassLoader == null) {
-        if (SerializedJsonStatic.log.isTraceEnabled) SerializedJsonStatic.log.trace("Using class's classloader [%s]", getClass.getClassLoader)
+        if (SerializedJsonStatic.log.isTraceEnabled) {
+          SerializedJsonStatic.log
+            .trace("Using class's classloader [%s]", getClass.getClassLoader)
+        }
         getClass.getClassLoader.loadClass(cn.toString)
       } else {
         if (SerializedJsonStatic.log.isTraceEnabled) {
@@ -505,10 +513,9 @@ class SerializedHadoopConfig(delegate: Configuration) extends KryoSerializable w
   }
 }
 
-class DateBucketPartitioner(gran: Granularity, interval: Interval) extends Partitioner
+class DateBucketPartitioner(gran: Granularity, intervals: Iterable[Interval]) extends Partitioner
 {
-  val intervalMap: Map[Long, Int] = gran.getIterable(interval)
-    .toSeq
+  val intervalMap: Map[Long, Int] = intervals
     .map(_.getStart.getMillis)
     .foldLeft(Map[Long, Int]())((a, b) => a + (b -> a.size))
 

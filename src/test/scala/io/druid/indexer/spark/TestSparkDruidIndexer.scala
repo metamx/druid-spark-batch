@@ -41,7 +41,10 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
   import TestScalaBatchIndexTask._
 
   "The spark indexer" should "return proper DataSegments" in {
-    val data_files = Seq(this.getClass.getResource("/lineitem.small.tbl").toString, this.getClass.getResource("/empty.tbl").toString)
+    val data_files = Seq(
+      this.getClass.getResource("/lineitem.small.tbl").toString,
+      this.getClass.getResource("/empty.tbl").toString
+    )
     val closer = Closer.create()
     val outDir = Files.createTempDirectory("segments").toFile
     (outDir.mkdirs() || outDir.exists()) && outDir.isDirectory should be(true)
@@ -73,10 +76,11 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
           override def close(): Unit = sc.stop()
         }
       )
+
       val loadResults = SparkDruidIndexer.loadData(
         data_files,
         new SerializedJson(dataSchema),
-        interval,
+        SparkBatchIndexTask.mapToSegmentIntervals(Seq(interval), Granularity.YEAR),
         rowsPerPartition,
         rowsPerFlush,
         outDir.toString,
@@ -114,33 +118,36 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
             }
           }
           qindex.getNumRows should be > 0
-          for(colName <- Seq("count")) {
+          for (colName <- Seq("count")) {
             val column = index.getColumn(colName).getGenericColumn
             try {
               for (i <- Range.apply(0, qindex.getNumRows)) {
                 column.getLongSingleValueRow(i) should not be 0
               }
-            } finally {
+            }
+            finally {
               column.close()
             }
           }
-          for(colName <- Seq("L_QUANTITY_longSum")) {
+          for (colName <- Seq("L_QUANTITY_longSum")) {
             val column = index.getColumn(colName).getGenericColumn
             try {
               Range.apply(0, qindex.getNumRows).map(column.getLongSingleValueRow).sum should not be 0
-            } finally {
+            }
+            finally {
               column.close()
             }
           }
-          for(colName <- Seq("L_DISCOUNT_doubleSum", "L_TAX_doubleSum")) {
+          for (colName <- Seq("L_DISCOUNT_doubleSum", "L_TAX_doubleSum")) {
             val column = index.getColumn(colName).getGenericColumn
             try {
               Range.apply(0, qindex.getNumRows).map(column.getFloatSingleValueRow).sum should not be 0.0D
-            } finally {
+            }
+            finally {
               column.close()
             }
           }
-          index.getDataInterval.getEnd.getMillis should not be (JodaUtils.MAX_INSTANT)
+          index.getDataInterval.getEnd.getMillis should not be JodaUtils.MAX_INSTANT
         }
         finally {
           index.close()
@@ -153,60 +160,73 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
   }
 
   "The DateBucketPartitioner" should "properly partition single item data" in {
-    val interval = Interval.parse("1992/1993")
-    val partitioner = new DateBucketPartitioner(Granularity.YEAR, interval)
-    partitioner.getPartition((interval.getStartMillis, 0)) should equal(0L)
+    val intervals = SparkBatchIndexTask.mapToSegmentIntervals(Seq(Interval.parse("1992/1993")), Granularity.YEAR)
+    val partitioner = new DateBucketPartitioner(Granularity.YEAR, intervals)
+    partitioner.getPartition((intervals.head.getStartMillis, 0)) should equal(0L)
   }
 
 
   "The DateBucketPartitioner" should "throw an error if out of bounds" in {
-    val interval = Interval.parse("1992/1993")
-    val partitioner = new DateBucketPartitioner(Granularity.YEAR, interval)
+    val intervals = SparkBatchIndexTask.mapToSegmentIntervals(Seq(Interval.parse("1992/1993")), Granularity.YEAR)
+    val partitioner = new DateBucketPartitioner(Granularity.YEAR, intervals)
     an[IAE] should be thrownBy {
       partitioner.getPartition((0, 0))
     }
   }
 
   "The DateBucketPartitioner" should "properly partition for multiple timespans" in {
-    val interval = Interval.parse("1992/1999")
-    val partitioner = new DateBucketPartitioner(Granularity.YEAR, interval)
+    val intervals = SparkBatchIndexTask.mapToSegmentIntervals(Seq(Interval.parse("1992/1999")), Granularity.YEAR)
+    val partitioner = new DateBucketPartitioner(Granularity.YEAR, intervals)
     var idex = 0
-    Granularity.YEAR.getIterable(interval).asScala.foreach(
+    intervals.foreach(
       i => {
         partitioner.getPartition((i.getStartMillis, 0)) should equal(idex)
         idex += 1
       }
     )
+    idex should be(intervals.size)
   }
 
   "The DateBucketAndHashPartitioner" should "properly partition single data" in {
-    val interval = Interval.parse("1992/1993")
+    val intervals = SparkBatchIndexTask.mapToSegmentIntervals(Seq(Interval.parse("1992/1993")), Granularity.YEAR)
     val partitioner = new
         DateBucketAndHashPartitioner(Granularity.YEAR, Map((new DateTime("1992").getMillis, 0L) -> 0))
-    partitioner.getPartition(makeEvent(interval.getStart)) should equal(0)
+    partitioner.getPartition(makeEvent(intervals.head.getStart)) should equal(0)
   }
 
 
   "The DateBucketAndHashPartitioner" should "properly partition multiple date ranges" in {
-    val interval = Interval.parse("1992/1994")
+    val intervals = SparkBatchIndexTask.mapToSegmentIntervals(Seq(Interval.parse("1992/1994")), Granularity.YEAR)
     val partitioner = new DateBucketAndHashPartitioner(
       Granularity.YEAR,
       Map((new DateTime("1992").getMillis, 0L) -> 0, (new DateTime("1993").getMillis, 0L) -> 1)
     )
-    partitioner.getPartition(makeEvent(interval.getStart)) should equal(0)
-    partitioner.getPartition(makeEvent(interval.getEnd.minus(10L))) should equal(1)
+    partitioner.getPartition(makeEvent(intervals.head.getStart)) should equal(0)
+    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L))) should equal(1)
+  }
+
+
+  "The DateBucketAndHashPartitioner" should "properly partition disjoint date ranges" in {
+    val intervals = SparkBatchIndexTask
+      .mapToSegmentIntervals(Seq(Interval.parse("1992/1993"), Interval.parse("1995/1996")), Granularity.YEAR)
+    val partitioner = new DateBucketAndHashPartitioner(
+      Granularity.YEAR,
+      Map((new DateTime("1992").getMillis, 0L) -> 0, (new DateTime("1995").getMillis, 0L) -> 1)
+    )
+    partitioner.getPartition(makeEvent(intervals.head.getStart)) should equal(0)
+    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L))) should equal(1)
   }
 
   "The DateBucketAndHashPartitioner workflow" should "properly partition multiple date ranges and buckets" in {
-    val interval = Interval.parse("1992/1994")
+    val intervals = SparkBatchIndexTask.mapToSegmentIntervals(Seq(Interval.parse("1992/1994")), Granularity.YEAR)
     val map = Map(new DateTime("1992").getMillis -> 100L, new DateTime("1993").getMillis -> 200L)
     val m = SparkDruidIndexer.getSizedPartitionMap(map, 150)
     val partitioner = new DateBucketAndHashPartitioner(Granularity.YEAR, m)
-    partitioner.getPartition(makeEvent(interval.getStart)) should equal(0)
-    partitioner.getPartition(makeEvent(interval.getEnd.minus(10L))) should equal(1)
-    partitioner.getPartition(makeEvent(interval.getEnd.minus(10L), "something else")) should equal(2)
-    partitioner.getPartition(makeEvent(interval.getEnd.minus(10L), "anotherHash3")) should equal(2)
-    partitioner.getPartition(makeEvent(interval.getEnd.minus(10L), "anotherHash")) should equal(1)
+    partitioner.getPartition(makeEvent(intervals.head.getStart)) should equal(0)
+    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L))) should equal(1)
+    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "something else")) should equal(2)
+    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "anotherHash3")) should equal(2)
+    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "anotherHash")) should equal(1)
   }
 
   def makeEvent(d: DateTime, v: String = "dim11"): (Long, Seq[(String, List[String])]) = {
@@ -257,12 +277,15 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
     m.get((2L, 0L)) should equal(Some(1L))
   }
   "DateBucketAndHashPartitioner" should "handle min value hash" in {
-    val partitioner = new DateBucketAndHashPartitioner(Granularity.YEAR, Map[(Long, Long), Int]((0L, 0L) -> 1, (0L, 0L)->2))
-    partitioner.getPartition((100000L, new Object(){
-      override def hashCode() : Int =  {
-        Integer.MIN_VALUE
-      }
-    })) should be(2)
+    val partitioner = new
+        DateBucketAndHashPartitioner(Granularity.YEAR, Map[(Long, Long), Int]((0L, 0L) -> 1, (0L, 0L) -> 2))
+    partitioner.getPartition(
+      (100000L, new Object() {
+        override def hashCode(): Int = {
+          Integer.MIN_VALUE
+        }
+      })
+    ) should be(2)
   }
 }
 
