@@ -33,7 +33,7 @@ import com.metamx.common.scala.Logging
 import com.metamx.common.{Granularity, IAE, ISE}
 import io.druid.data.input.impl._
 import io.druid.data.input.{MapBasedInputRow, ProtoBufInputRowParser}
-import io.druid.guice.annotations.{Smile, Self}
+import io.druid.guice.annotations.{Json, Self}
 import io.druid.guice.{GuiceInjectors, JsonConfigProvider}
 import io.druid.indexer.{HadoopyStringInputRowParser, JobHelper}
 import io.druid.initialization.Initialization
@@ -385,7 +385,7 @@ object SerializedJsonStatic extends Logging
   // So instead we have to capture the close
   lazy val mapper  : ObjectMapper = {
     try {
-      injector.getInstance(Key.get(classOf[ObjectMapper], classOf[Smile]))
+      injector.getInstance(Key.get(classOf[ObjectMapper], classOf[Json]))
     }
     catch {
       case e: Exception =>
