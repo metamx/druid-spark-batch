@@ -15,6 +15,4 @@ The default properties injected into spark are as follows:
     .set("file.encoding", "UTF-8")
     .set("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager")
     .set("org.jboss.logging.provider", "slf4j")
-    .set("druid.processing.columnCache.sizeBytes", "1000000000")
-    .set("druid.extensions.searchCurrentClassloader", "true")
 ```

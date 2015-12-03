@@ -19,14 +19,16 @@
 
 package io.druid.indexer.spark
 
-import java.io.File
+import java.io.{Closeable, File, IOException, PrintWriter}
 import java.net.{URL, URLClassLoader}
+import java.nio.file.Files
 import java.util
 import java.util.{Objects, Properties}
 
 import com.fasterxml.jackson.annotation.{JsonCreator, JsonProperty}
 import com.google.common.base.{Preconditions, Strings}
 import com.google.common.collect.Iterables
+import com.google.common.io.Closer
 import com.google.inject.Injector
 import com.metamx.common.Granularity
 import com.metamx.common.logger.Logger
@@ -290,6 +292,43 @@ object SparkBatchIndexTask
       //.set("spark.kryo.classesToRegister", SparkBatchIndexTask.KRYO_CLASSES.map(_.getCanonicalName).mkString(","))
       .registerKryoClasses(SparkBatchIndexTask.KRYO_CLASSES)
 
+    val propertiesToSet = new Properties()
+    propertiesToSet.setProperty("druid.extensions.searchCurrentClassloader", "true")
+
+    val propertiesTempDir = Files.createTempDirectory("druid_spark_properties_").toFile
+    log.debug("Using properties path [%s]", propertiesTempDir)
+    val propertiesFile = new File(propertiesTempDir, "runtime.properties")
+
+    val closer: Closer = Closer.create()
+
+    closer.register(
+      new Closeable
+      {
+        @throws[IOException] override def close(): Unit = {
+          if (propertiesTempDir.exists() && !propertiesTempDir.delete()) {
+            log.info(
+              new IOException("Unable to delete %s" format propertiesTempDir),
+              "Could note cleanup temporary directory"
+            )
+          }
+        }
+      }
+    )
+
+    closer.register(
+      new Closeable
+      {
+        @throws[IOException] override def close(): Unit = {
+          if (propertiesFile.exists() && !propertiesFile.delete()) {
+            log.info(
+              new IOException("Unable to delete %s" format propertiesFile),
+              "Could not clean up temporary properties file"
+            )
+          }
+        }
+      }
+    )
+
     // See io.druid.indexing.overlord.config.ForkingTaskRunnerConfig.allowedPrefixes
     // We don't include tmp.dir
     // user.timezone and file.encoding are set above
@@ -305,25 +344,47 @@ object SparkBatchIndexTask
       }
     ).foreach(
       x => {
-        log.debug("Setting io.druid property [%s]", x)
-        conf.set(x, System.getProperty(x))
+        log.info("Setting io.druid property [%s]", x)
+        propertiesToSet.setProperty(x, System.getProperty(x))
       }
     )
     System.getProperties.stringPropertyNames().filter(_.startsWith(CHILD_PROPERTY_PREFIX)).foreach(
       x => {
         val y = x.substring(CHILD_PROPERTY_PREFIX.length)
-        log.debug("Setting child property [%s]", y)
-        conf.set(y, System.getProperty(x))
+        log.info("Setting child property [%s]", y)
+        propertiesToSet.setProperty(y, System.getProperty(x))
       }
     )
 
-    log
-      .debug(
-        "Adding properties: [%s]",
-        task.getProperties.entrySet().map(x => Seq(x.getKey.toString, x.getValue.toString).mkString(":")).mkString(",")
-      )
-    val sc = new SparkContext(conf.setAll(task.getProperties))
+    log.info(
+      "Adding task properties: [%s]",
+      task.getProperties.entrySet().map(x => Seq(x.getKey.toString, x.getValue.toString).mkString(":")).mkString(",")
+    )
+    task.getProperties.foreach(x => propertiesToSet.setProperty(x._1, x._2))
+    val sc = new SparkContext(conf.setAll(propertiesToSet))
+    closer.register(
+      new Closeable
+      {
+        override def close(): Unit = sc.stop()
+      }
+    )
     try {
+
+      val propertyCloser: Closer = Closer.create()
+      val printWriter = propertyCloser.register(new PrintWriter(propertiesFile))
+      // Make a file to propagate to all nodes which contains the properties
+      try {
+        propertiesToSet.toSeq.foreach(x => printWriter.println(Seq(x._1, x._2).mkString("=")))
+      }
+      catch {
+        case t: Throwable => throw propertyCloser.rethrow(t)
+      }
+      finally {
+        propertyCloser.close()
+      }
+
+      sc.addJar(propertiesFile.toURI.toString)
+
       System.getProperties.stringPropertyNames().filter(_.startsWith(CHILD_PROPERTY_PREFIX)).foreach(
         x => {
           val y = x.substring(CHILD_PROPERTY_PREFIX.length)
@@ -388,8 +449,11 @@ object SparkBatchIndexTask
       log.info("Found segments `%s`", util.Arrays.deepToString(dataSegments.toArray))
       new util.ArrayList(dataSegments.map(SerializedJsonStatic.mapper.writeValueAsString))
     }
+    catch {
+      case t: Throwable => throw closer.rethrow(t)
+    }
     finally {
-      sc.stop()
+      closer.close()
     }
   }
 }
