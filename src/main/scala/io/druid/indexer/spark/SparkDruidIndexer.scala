@@ -33,7 +33,7 @@ import com.metamx.common.scala.Logging
 import com.metamx.common.{Granularity, IAE, ISE}
 import io.druid.data.input.impl._
 import io.druid.data.input.{MapBasedInputRow, ProtoBufInputRowParser}
-import io.druid.guice.annotations.{Self, Smile}
+import io.druid.guice.annotations.{Json, Self}
 import io.druid.guice.{GuiceInjectors, JsonConfigProvider}
 import io.druid.indexer.{HadoopyStringInputRowParser, JobHelper}
 import io.druid.initialization.Initialization
@@ -61,7 +61,7 @@ object SparkDruidIndexer extends Logging
   def loadData(
     dataFiles: Seq[String],
     dataSchema: SerializedJson[DataSchema],
-    ingestIntervals : Iterable[Interval],
+    ingestIntervals: Iterable[Interval],
     rowsPerPartition: Long,
     rowsPerPersist: Int,
     outPathString: String,
@@ -317,6 +317,9 @@ object SparkDruidIndexer extends Logging
             log.info("Finished pushing [%s]", finalDataSegment)
             Seq(new SerializedJson[DataSegment](finalDataSegment)).iterator
           }
+          catch {
+            case t: Throwable => throw closer.rethrow(t)
+          }
           finally {
             closer.close()
           }
@@ -352,7 +355,7 @@ object SparkDruidIndexer extends Logging
 
 object SerializedJsonStatic extends Logging
 {
-  lazy val injector: Injector = {
+  lazy val injector: Injector     = {
     try {
       Initialization.makeInjectorWithModules(
         GuiceInjectors.makeStartupInjector(), List[Module](
@@ -382,7 +385,7 @@ object SerializedJsonStatic extends Logging
   // So instead we have to capture the close
   lazy val mapper  : ObjectMapper = {
     try {
-      injector.getInstance(Key.get(classOf[ObjectMapper], classOf[Smile]))
+      injector.getInstance(Key.get(classOf[ObjectMapper], classOf[Json]))
     }
     catch {
       case e: Exception =>
