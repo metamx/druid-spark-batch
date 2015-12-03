@@ -16,3 +16,5 @@ The default properties injected into spark are as follows:
     .set("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager")
     .set("org.jboss.logging.provider", "slf4j")
 ```
+
+To use this extension, the hadoop client libraries and spark assembly (which might include the hadoop libraries) should be on the classpath of the overlord or middle manager. And the following should be added to `druid.extensions.coordinates`  : `io.druid.extensions:druid-spark-batch_2.10:0.0.13` (obviously with the corrected version for whichever version you are using)

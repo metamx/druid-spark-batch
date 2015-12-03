@@ -35,33 +35,15 @@ val hadoop_version = "2.4.0"
 val spark_version = "1.5.1-mmx2"
 val guava_version = "16.0.1"
 
-// Use Spark's jetty version instead of Druid's to prevent class collisions
-val sparkEclipseJettyVersion = "8.1.14.v20131031"
-val explicitDependencies = Seq(
-  "org.eclipse.jetty" % "jetty-server" % sparkEclipseJettyVersion ,
-  "org.eclipse.jetty" % "jetty-plus" % sparkEclipseJettyVersion ,
-  "org.eclipse.jetty" % "jetty-util" % sparkEclipseJettyVersion ,
-  "org.eclipse.jetty" % "jetty-http" % sparkEclipseJettyVersion ,
-  "org.eclipse.jetty" % "jetty-servlet" % sparkEclipseJettyVersion
-)
+libraryDependencies += "org.apache.spark" %% "spark-core" % spark_version % "compile"
 
-libraryDependencies += ("org.apache.spark" %% "spark-core" % spark_version
-  exclude ("log4j", "log4j") exclude ("org.apache.hadoop", "hadoop-client")
-  )
-
-libraryDependencies += "org.spark-project.akka" %% "akka-actor" % "2.3.4-spark"
 // For Path
-libraryDependencies += ("org.apache.hadoop" % "hadoop-client" % hadoop_version
-  exclude("asm", "asm") exclude("org.ow2.asm", "asm") exclude("org.jboss.netty", "netty")
-  exclude("commons-logging", "commons-logging") exclude("com.google.guava", "guava")
-  exclude("org.mortbay.jetty", "servlet-api-2.5") exclude("javax.servlet", "servlet-api")
-  exclude("junit", "junit")
-  )
+libraryDependencies += "org.apache.hadoop" % "hadoop-client" % hadoop_version % "compile"
 
 libraryDependencies += "org.scalatest" %% "scalatest" % "2.2.4" % "test"
 libraryDependencies += "io.druid" % "druid-processing" % druid_version % "compile"
 libraryDependencies += ("io.druid" % "druid-server" % druid_version % "compile"
-  excludeAll ExclusionRule(organization = "org.eclipse.jetty")
+  //excludeAll ExclusionRule(organization = "org.eclipse.jetty")
   )
 libraryDependencies += "io.druid" % "druid-indexing-service" % druid_version % "compile"
 libraryDependencies += "io.druid" % "druid-indexing-hadoop" % druid_version % "compile"
@@ -70,7 +52,6 @@ libraryDependencies += "com.google.guava" % "guava" % guava_version // Prevents 
 libraryDependencies += "com.sun.jersey" % "jersey-servlet" % "1.17.1"
 libraryDependencies += "org.xerial.snappy" % "snappy-java" % "1.1.2-M1"
 libraryDependencies += "com.metamx" %% "scala-util" % "1.11.7"
-libraryDependencies ++= explicitDependencies
 
 
 resolvers += Resolver.mavenLocal
