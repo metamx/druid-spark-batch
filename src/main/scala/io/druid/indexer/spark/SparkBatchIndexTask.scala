@@ -273,6 +273,19 @@ object SparkBatchIndexTask
     originalIntervals.map(x => iterableAsScalaIterable(granularity.getIterable(x))).reduce(_ ++ _)
   }
 
+  // Properties which do not carry over to executors
+  private [SparkBatchIndexTask] val forbiddenProperties = Seq("druid.extensions.coordinates")
+
+  // See io.druid.indexing.overlord.config.ForkingTaskRunnerConfig.allowedPrefixes
+  // We don't include tmp.dir
+  // user.timezone and file.encoding are set above
+  private [SparkBatchIndexTask] val allowedPrefixes = Seq(
+    "com.metamx",
+    "druid",
+    "io.druid",
+    "hadoop"
+  )
+
   def runTask(args: java.util.ArrayList[String]): java.util.ArrayList[String] = {
     val task = SerializedJsonStatic.mapper.readValue(args.get(0), classOf[SparkBatchIndexTask])
     val conf = new SparkConf()
@@ -329,15 +342,6 @@ object SparkBatchIndexTask
       }
     )
 
-    // See io.druid.indexing.overlord.config.ForkingTaskRunnerConfig.allowedPrefixes
-    // We don't include tmp.dir
-    // user.timezone and file.encoding are set above
-    val allowedPrefixes = Seq(
-      "com.metamx",
-      "druid",
-      "io.druid",
-      "hadoop"
-    )
     System.getProperties.stringPropertyNames().filter(
       x => {
         allowedPrefixes.exists(x.startsWith)
@@ -361,6 +365,9 @@ object SparkBatchIndexTask
       task.getProperties.entrySet().map(x => Seq(x.getKey.toString, x.getValue.toString).mkString(":")).mkString(",")
     )
     task.getProperties.foreach(x => propertiesToSet.setProperty(x._1, x._2))
+
+    forbiddenProperties.foreach(propertiesToSet.remove)
+
     val sc = new SparkContext(conf.setAll(propertiesToSet))
     closer.register(
       new Closeable
