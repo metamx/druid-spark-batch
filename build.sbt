@@ -35,10 +35,10 @@ val hadoop_version = "2.4.0"
 val spark_version = "1.5.1-mmx2"
 val guava_version = "16.0.1"
 
-libraryDependencies += "org.apache.spark" %% "spark-core" % spark_version % "compile"
+libraryDependencies += "org.apache.spark" %% "spark-core" % spark_version % "provided"
 
 // For Path
-libraryDependencies += "org.apache.hadoop" % "hadoop-client" % hadoop_version % "compile"
+libraryDependencies += "org.apache.hadoop" % "hadoop-client" % hadoop_version % "provided"
 
 libraryDependencies += "org.scalatest" %% "scalatest" % "2.2.4" % "test"
 libraryDependencies += "io.druid" % "druid-processing" % druid_version % "compile"
@@ -53,6 +53,69 @@ libraryDependencies += "com.sun.jersey" % "jersey-servlet" % "1.17.1"
 libraryDependencies += "org.xerial.snappy" % "snappy-java" % "1.1.2-M1"
 libraryDependencies += "com.metamx" %% "scala-util" % "1.11.7"
 
+
+assemblyMergeStrategy in Compile := {
+  case PathList("javax", "servlet", xs @ _*)         => MergeStrategy.first
+  case PathList(ps @ _*) if ps.last endsWith ".html" => MergeStrategy.first
+  case PathList("org", "apache", "commons", "logging", xs @ _* )  => MergeStrategy.first
+  case PathList("javax", "annotation", xs @ _*) => MergeStrategy.last //favor jsr305
+  case PathList("mime.types") => MergeStrategy.filterDistinctLines
+  case PathList("META-INF", xs @ _*) => {
+    xs map {
+      _.toLowerCase
+    } match {
+      case ("manifest.mf" :: Nil) | ("index.list" :: Nil) | ("dependencies" :: Nil) =>
+        MergeStrategy.discard
+      case ps @ (x :: xs) if ps.last.endsWith(".sf") || ps.last.endsWith(".dsa") =>
+        MergeStrategy.discard
+      case "services" :: xs =>
+        MergeStrategy.filterDistinctLines
+      case "jersey-module-version" :: xs => MergeStrategy.first
+      case "sisu" :: xs=> MergeStrategy.discard
+      case "maven" :: xs => MergeStrategy.discard
+      case "plexus" :: xs => MergeStrategy.discard
+      case _ => MergeStrategy.discard
+    }
+  }
+  case x =>
+    val oldStrategy = (assemblyMergeStrategy in assembly).value
+    oldStrategy(x)
+}
+
+assemblyMergeStrategy in assembly := {
+  case PathList("javax", "servlet", xs @ _*)         => MergeStrategy.first
+  case PathList(ps @ _*) if ps.last endsWith ".html" => MergeStrategy.first
+  case PathList("org", "apache", "commons", "logging", xs @ _* )  => MergeStrategy.first
+  case PathList("javax", "annotation", xs @ _*) => MergeStrategy.last //favor jsr305
+  case PathList("mime.types") => MergeStrategy.filterDistinctLines
+  case PathList("META-INF", xs @ _*) => {
+    xs map {
+      _.toLowerCase
+    } match {
+      case ("manifest.mf" :: Nil) | ("index.list" :: Nil) | ("dependencies" :: Nil) =>
+        MergeStrategy.discard
+      case ps @ (x :: xs) if ps.last.endsWith(".sf") || ps.last.endsWith(".dsa") =>
+        MergeStrategy.discard
+      case "services" :: xs =>
+        MergeStrategy.filterDistinctLines
+      case "jersey-module-version" :: xs => MergeStrategy.first
+      case "sisu" :: xs=> MergeStrategy.discard
+      case "maven" :: xs => MergeStrategy.discard
+      case "plexus" :: xs => MergeStrategy.discard
+      case _ => MergeStrategy.discard
+    }
+  }
+  case x =>
+    val oldStrategy = (assemblyMergeStrategy in assembly).value
+    oldStrategy(x)
+}
+
+artifact in (Compile, assembly) := {
+  val art = (artifact in (Compile, assembly)).value
+  art.copy(`classifier` = Some("assembly"))
+}
+
+addArtifact(artifact in (Compile, assembly), assembly)
 
 resolvers += Resolver.mavenLocal
 resolvers += "JitPack.IO" at "https://jitpack.io"
