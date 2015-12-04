@@ -35,19 +35,51 @@ val hadoop_version = "2.4.0"
 val spark_version = "1.5.1-mmx2"
 val guava_version = "16.0.1"
 
-libraryDependencies += "org.apache.spark" %% "spark-core" % spark_version % "provided"
+libraryDependencies += ("org.apache.spark" %% "spark-core" % spark_version
+  exclude ("log4j", "log4j")
+  exclude ("org.slf4j", "slf4j-log4j12")
+  exclude("com.google.guava", "guava")
+  exclude("org.apache.hadoop", "hadoop-client")
+  exclude("org.apache.hadoop", "hadoop-yarn-api")
+  exclude("org.apache.hadoop", "hadoop-yarn-common")
+  exclude("com.sun.jersey", "jersey-server")
+  exclude("org.eclipse.jetty", "jetty-server")
+  exclude("org.eclipse.jetty", "jetty-plus")
+  exclude("org.eclipse.jetty", "jetty-util")
+  exclude("org.eclipse.jetty", "jetty-http")
+  exclude("org.eclipse.jetty", "jetty-servlet")
+  exclude("com.esotericsoftware.minlog", "minlog")
+  )
 
 // For Path
-libraryDependencies += "org.apache.hadoop" % "hadoop-client" % hadoop_version % "provided"
+libraryDependencies += ("org.apache.hadoop" % "hadoop-client" % hadoop_version
+  exclude("asm", "asm")
+  exclude("org.ow2.asm", "asm")
+  exclude("org.jboss.netty", "netty")
+  exclude("commons-logging", "commons-logging")
+  exclude("com.google.guava", "guava")
+  exclude("org.mortbay.jetty", "servlet-api-2.5")
+  exclude("javax.servlet", "servlet-api")
+  exclude("junit", "junit")
+  exclude ("org.slf4j", "slf4j-log4j12")
+  exclude ("log4j", "log4j")
+  exclude("commons-beanutils", "commons-beanutils")
+  exclude("org.apache.hadoop", "hadoop-yarn-api")
+  exclude("com.sun.jersey", "jersey-server")
+  exclude("org.eclipse.jetty", "jetty-server")
+  exclude("org.eclipse.jetty", "jetty-plus")
+  exclude("org.eclipse.jetty", "jetty-util")
+  exclude("org.eclipse.jetty", "jetty-http")
+  exclude("org.eclipse.jetty", "jetty-servlet")
+  exclude("commons-beanutils","commons-beanutils-core")
+  )
 
 libraryDependencies += "org.scalatest" %% "scalatest" % "2.2.4" % "test"
-libraryDependencies += "io.druid" % "druid-processing" % druid_version % "compile"
-libraryDependencies += ("io.druid" % "druid-server" % druid_version % "compile"
-  //excludeAll ExclusionRule(organization = "org.eclipse.jetty")
-  )
-libraryDependencies += "io.druid" % "druid-indexing-service" % druid_version % "compile"
-libraryDependencies += "io.druid" % "druid-indexing-hadoop" % druid_version % "compile"
-libraryDependencies += "org.joda" % "joda-convert" % "1.8.1" % "compile" // Prevents intellij silliness and sbt warnings
+libraryDependencies += "io.druid" % "druid-processing" % druid_version % "provided"
+libraryDependencies += "io.druid" % "druid-server" % druid_version % "provided"
+libraryDependencies += "io.druid" % "druid-indexing-service" % druid_version % "provided"
+libraryDependencies += "io.druid" % "druid-indexing-hadoop" % druid_version % "provided"
+libraryDependencies += "org.joda" % "joda-convert" % "1.8.1" % "provided" // Prevents intellij silliness and sbt warnings
 libraryDependencies += "com.google.guava" % "guava" % guava_version // Prevents serde problems for guice exceptions
 libraryDependencies += "com.sun.jersey" % "jersey-servlet" % "1.17.1"
 libraryDependencies += "org.xerial.snappy" % "snappy-java" % "1.1.2-M1"
@@ -60,6 +92,8 @@ assemblyMergeStrategy in Compile := {
   case PathList("org", "apache", "commons", "logging", xs @ _* )  => MergeStrategy.first
   case PathList("javax", "annotation", xs @ _*) => MergeStrategy.last //favor jsr305
   case PathList("mime.types") => MergeStrategy.filterDistinctLines
+  case PathList("com", "google", "common", "base", xs @ _*) => MergeStrategy.last // spark-network-common pulls these in
+  case PathList("org", "apache", "spark", "unused", xs @ _*) => MergeStrategy.first
   case PathList("META-INF", xs @ _*) => {
     xs map {
       _.toLowerCase
@@ -88,6 +122,8 @@ assemblyMergeStrategy in assembly := {
   case PathList("org", "apache", "commons", "logging", xs @ _* )  => MergeStrategy.first
   case PathList("javax", "annotation", xs @ _*) => MergeStrategy.last //favor jsr305
   case PathList("mime.types") => MergeStrategy.filterDistinctLines
+  case PathList("com", "google", "common", "base", xs @ _*) => MergeStrategy.last // spark-network-common pulls these in
+  case PathList("org", "apache", "spark", "unused", xs @ _*) => MergeStrategy.first
   case PathList("META-INF", xs @ _*) => {
     xs map {
       _.toLowerCase
