@@ -88,7 +88,7 @@ class SparkBatchIndexTask(
   },
   dataSchema.getDataSource,
   List[String](
-    "%s:%s_%s:%s" format
+    "%s:%s_%s:jar:assembly:%s" format
       (
         classOf[SparkBatchIndexTask].getPackage.getImplementationVendor,
         classOf[SparkBatchIndexTask].getPackage.getImplementationTitle,
