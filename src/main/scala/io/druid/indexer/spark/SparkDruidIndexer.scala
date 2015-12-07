@@ -29,7 +29,6 @@ import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.common.io.Closer
 import com.google.inject.{Binder, Injector, Key, Module}
-import com.metamx.common.scala.Logging
 import com.metamx.common.{Granularity, IAE, ISE}
 import io.druid.data.input.impl._
 import io.druid.data.input.{MapBasedInputRow, ProtoBufInputRowParser}
@@ -51,7 +50,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapreduce.TaskAttemptID
 import org.apache.hadoop.util.Progressable
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.{Partitioner, SparkContext}
+import org.apache.spark.{Logging, Partitioner, SparkContext}
 import org.joda.time.{DateTime, Interval}
 
 import scala.collection.JavaConversions._
@@ -70,12 +69,12 @@ object SparkDruidIndexer extends Logging
   ): Seq[DataSegment] =
   {
     val dataSource = dataSchema.getDelegate.getDataSource
-    log.info("Launching Spark task with jar version [%s]", getClass.getPackage.getImplementationVersion)
+    logInfo("Launching Spark task with jar version [%s]" format getClass.getPackage.getImplementationVersion)
     val dataSegmentVersion = DateTime.now().toString
     val hadoopConfig = new SerializedHadoopConfig(sc.hadoopConfiguration)
     val aggs: Array[SerializedJson[AggregatorFactory]] = dataSchema.getDelegate.getAggregators
       .map(x => new SerializedJson[AggregatorFactory](x))
-    log.info("Starting caching of raw data for [%s] over intervals [%s]", dataSource, ingestIntervals)
+    logInfo("Starting caching of raw data for [%s] over intervals [%s]" format(dataSource, ingestIntervals))
     val passableIntervals = ingestIntervals.foldLeft(Seq[Interval]())((a, b) => a ++ Seq(b)) // Materialize for passing
 
     val totalGZSize = dataFiles.map(
@@ -87,7 +86,7 @@ object SparkDruidIndexer extends Logging
     ).sum
     val startingPartitions = (totalGZSize / (100L << 20)).toInt + 1
 
-    log.info("Splitting [%s] gz bytes into [%s] partitions", totalGZSize, startingPartitions)
+    logInfo("Splitting [%s] gz bytes into [%s] partitions" format(totalGZSize, startingPartitions))
 
     val baseData = sc.textFile(dataFiles mkString ",") // Hadoopify the data so it doesn't look so silly in Spark's DAG
       .repartition(startingPartitions)
@@ -99,11 +98,10 @@ object SparkDruidIndexer extends Logging
             case x: ProtoBufInputRowParser => throw new
                 UnsupportedOperationException("Cannot use Protobuf for text input")
             case x =>
-              log
-                .warn(
-                  "Could not figure out how to handle class [%s]. Hoping it can handle string input",
+              logWarning(
+                "Could not figure out how to handle class [%s]. Hoping it can handle string input" format
                   x.getClass.getCanonicalName
-                )
+              )
               it.map(x.asInstanceOf[InputRowParser[Any]].parse)
           }
           i.filter(r => passableIntervals.exists(_.contains(r.getTimestamp)))
@@ -124,7 +122,7 @@ object SparkDruidIndexer extends Logging
       )
       .persist(StorageLevel.DISK_ONLY)
 
-    log.info("Starting uniqes")
+    logInfo("Starting uniqes")
     val partitionMap: Map[Long, Long] = baseData
       .countApproxDistinctByKey(
         0.05,
@@ -143,11 +141,9 @@ object SparkDruidIndexer extends Logging
     // Get dimension values and dims per timestamp
     hashToPartitionMap.foreach {
       (a: ((Long, Long), Int)) => {
-        log
-          .info(
-            "Date Bucket [%s] with partition number [%s] has total partition number [%s]",
-            a._1._1, a._1._2, a._2
-          )
+        logInfo(
+          "Date Bucket [%s] with partition number [%s] has total partition number [%s]" format(a._1._1, a._1._2, a._2)
+        )
       }
     }
 
@@ -179,7 +175,7 @@ object SparkDruidIndexer extends Logging
           val partitionNum = partitionNums.head
           val timeBucket = hashToPartitionMap.filter(_._2 == index).map(_._1._1).head
           val timeInterval = passableIntervals.filter(_.getStart.getMillis == timeBucket).head
-          log.info("Creating index [%s] for date range [%s]", partitionNum, timeInterval)
+          logInfo("Creating index [%s] for date range [%s]" format(partitionNum, timeInterval))
           val partitionCount = hashToPartitionMap.count(_._1._1 == timeBucket)
 
           val parser: InputRowParser[_] = SerializedJsonStatic.mapper
@@ -257,27 +253,27 @@ object SparkDruidIndexer extends Logging
               new ProgressIndicator
               {
                 override def stop(): Unit = {
-                  log.trace("Stop")
+                  logTrace("Stop")
                 }
 
                 override def stopSection(s: String): Unit = {
-                  if (log.isTraceEnabled) log.trace("Stop [%s]", s)
+                  logTrace("Stop [%s]" format s)
                 }
 
                 override def progress(): Unit = {
-                  log.trace("Progress")
+                  logTrace("Progress")
                 }
 
                 override def startSection(s: String): Unit = {
-                  if (log.isTraceEnabled) log.trace("Start [%s]", s)
+                  logTrace("Start [%s]" format s)
                 }
 
                 override def progressSection(s: String, s1: String): Unit = {
-                  if (log.isTraceEnabled) log.trace("Progress [%s]:[%s]", s, s1)
+                  logTrace("Progress [%s]:[%s]" format(s, s1))
                 }
 
                 override def start(): Unit = {
-                  log.trace("Start")
+                  logTrace("Start")
                 }
               }
             )
@@ -300,7 +296,7 @@ object SparkDruidIndexer extends Logging
               hadoopConf,
               new Progressable
               {
-                override def progress(): Unit = log.debug("Progress")
+                override def progress(): Unit = logDebug("Progress")
               },
               new TaskAttemptID(new org.apache.hadoop.mapred.TaskID(), index),
               file,
@@ -314,7 +310,7 @@ object SparkDruidIndexer extends Logging
               )
             )
             val finalDataSegment = pusher.push(file, dataSegment)
-            log.info("Finished pushing [%s]", finalDataSegment)
+            logInfo("Finished pushing [%s]" format finalDataSegment)
             Seq(new SerializedJson[DataSegment](finalDataSegment)).iterator
           }
           catch {
@@ -326,7 +322,7 @@ object SparkDruidIndexer extends Logging
         }
       )
     val results = partitioned_data.cache().collect().map(_.getDelegate)
-    if (log.isInfoEnabled) log.info("Finished with %s", util.Arrays.deepToString(results.map(_.toString)))
+    logInfo("Finished with %s" format util.Arrays.deepToString(results.map(_.toString)))
     results.toSeq
   }
 
@@ -375,7 +371,7 @@ object SerializedJsonStatic extends Logging
     }
     catch {
       case e: Exception =>
-        log.error(e, "Error initializing injector")
+        logError("Error initializing injector", e)
         throw e
     }
   }
@@ -389,7 +385,7 @@ object SerializedJsonStatic extends Logging
     }
     catch {
       case e: Exception =>
-        log.error(e, "Error getting object mapper instance")
+        logError("Error getting object mapper instance", e)
         throw e
     }
   }
@@ -407,6 +403,8 @@ object SerializedJsonStatic extends Logging
       // Ignore
     }
   }
+
+  def getLog = log
 
   val mapTypeReference = new TypeReference[java.util.Map[String, Object]] {}
 }
@@ -448,26 +446,26 @@ class SerializedJson[A](inputDelegate: A) extends KryoSerializable with Serializ
   @throws[IOException]
   @throws[ClassNotFoundException]
   private def readObject(input: ObjectInputStream) = {
-    if (SerializedJsonStatic.log.isTraceEnabled) SerializedJsonStatic.log.trace("Reading Object")
+    if (SerializedJsonStatic.getLog.isTraceEnabled) SerializedJsonStatic.getLog.trace("Reading Object")
     fillFromMap(getMap(input))
   }
 
   override def read(kryo: Kryo, input: Input): Unit = {
-    if (SerializedJsonStatic.log.isTraceEnabled) SerializedJsonStatic.log.trace("Reading Kryo")
+    if (SerializedJsonStatic.getLog.isTraceEnabled) SerializedJsonStatic.getLog.trace("Reading Kryo")
     fillFromMap(getMap(input))
   }
 
   def fillFromMap(m: Map[String, Object]): Unit = {
     val clazzName: Class[_] = m.get("class") match {
       case Some(cn) => if (Thread.currentThread().getContextClassLoader == null) {
-        if (SerializedJsonStatic.log.isTraceEnabled) {
-          SerializedJsonStatic.log
+        if (SerializedJsonStatic.getLog.isTraceEnabled) {
+          SerializedJsonStatic.getLog
             .trace("Using class's classloader [%s]", getClass.getClassLoader)
         }
         getClass.getClassLoader.loadClass(cn.toString)
       } else {
-        if (SerializedJsonStatic.log.isTraceEnabled) {
-          SerializedJsonStatic.log
+        if (SerializedJsonStatic.getLog.isTraceEnabled) {
+          SerializedJsonStatic.getLog
             .trace("Using context classloader [%s]", Thread.currentThread().getContextClassLoader)
         }
         Thread.currentThread().getContextClassLoader.loadClass(cn.toString)
@@ -478,7 +476,7 @@ class SerializedJson[A](inputDelegate: A) extends KryoSerializable with Serializ
       case Some(d) => SerializedJsonStatic.mapper.readValue(d.toString, clazzName).asInstanceOf[A]
       case _ => throw new NullPointerException("Missing `delegate`")
     }
-    if (SerializedJsonStatic.log.isTraceEnabled) SerializedJsonStatic.log.trace("Read in %s", delegate.toString)
+    if (SerializedJsonStatic.getLog.isTraceEnabled) SerializedJsonStatic.getLog.trace("Read in %s", delegate.toString)
   }
 
   def getDelegate = delegate
@@ -491,14 +489,14 @@ class SerializedHadoopConfig(delegate: Configuration) extends KryoSerializable w
 
   @throws[IOException]
   private def writeObject(out: ObjectOutputStream) = {
-    if (SerializedJsonStatic.log.isTraceEnabled) SerializedJsonStatic.log.trace("Writing Hadoop Object")
+    if (SerializedJsonStatic.getLog.isTraceEnabled) SerializedJsonStatic.getLog.trace("Writing Hadoop Object")
     del.write(out)
   }
 
   @throws[IOException]
   @throws[ClassNotFoundException]
   private def readObject(in: ObjectInputStream) = {
-    if (SerializedJsonStatic.log.isTraceEnabled) SerializedJsonStatic.log.trace("Reading Hadoop Object")
+    if (SerializedJsonStatic.getLog.isTraceEnabled) SerializedJsonStatic.getLog.trace("Reading Hadoop Object")
     del = new Configuration()
     del.readFields(in)
   }
@@ -506,12 +504,12 @@ class SerializedHadoopConfig(delegate: Configuration) extends KryoSerializable w
   def getDelegate = del
 
   override def write(kryo: Kryo, output: Output): Unit = {
-    if (SerializedJsonStatic.log.isTraceEnabled) SerializedJsonStatic.log.trace("Writing Hadoop Kryo")
+    if (SerializedJsonStatic.getLog.isTraceEnabled) SerializedJsonStatic.getLog.trace("Writing Hadoop Kryo")
     writeObject(new ObjectOutputStream(output))
   }
 
   override def read(kryo: Kryo, input: Input): Unit = {
-    if (SerializedJsonStatic.log.isTraceEnabled) SerializedJsonStatic.log.trace("Reading Hadoop Kryo")
+    if (SerializedJsonStatic.getLog.isTraceEnabled) SerializedJsonStatic.getLog.trace("Reading Hadoop Kryo")
     readObject(new ObjectInputStream(input))
   }
 }

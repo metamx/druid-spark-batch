@@ -36,19 +36,29 @@ val spark_version = "1.5.1-mmx2"
 val guava_version = "16.0.1"
 
 libraryDependencies += ("org.apache.spark" %% "spark-core" % spark_version
-  exclude ("log4j", "log4j")
-  exclude ("org.slf4j", "slf4j-log4j12")
+  exclude("org.roaringbitmap", "RoaringBitmap")
+  exclude("log4j", "log4j")
+  exclude("org.slf4j", "slf4j-log4j12")
   exclude("com.google.guava", "guava")
   exclude("org.apache.hadoop", "hadoop-client")
   exclude("org.apache.hadoop", "hadoop-yarn-api")
   exclude("org.apache.hadoop", "hadoop-yarn-common")
   exclude("com.sun.jersey", "jersey-server")
+  exclude("com.sun.jersey", "jersey-core")
+  exclude("com.sun.jersey", "jersey-core")
+  exclude("com.sun.jersey.contribs", "jersey-guice")
   exclude("org.eclipse.jetty", "jetty-server")
   exclude("org.eclipse.jetty", "jetty-plus")
   exclude("org.eclipse.jetty", "jetty-util")
   exclude("org.eclipse.jetty", "jetty-http")
   exclude("org.eclipse.jetty", "jetty-servlet")
   exclude("com.esotericsoftware.minlog", "minlog")
+  exclude("com.fasterxml.jackson.core", "jackson-core")
+  exclude("com.fasterxml.jackson.core", "jackson-annotations")
+  exclude("com.fasterxml.jackson.dataformat", "jackson-dataformat-smile")
+  exclude("com.fasterxml.jackson.datatype", "jackson-datatype-joda")
+  exclude("com.fasterxml.jackson.core", "jackson-databind")
+  exclude("io.netty", "netty")
   )
 
 // For Path
@@ -61,17 +71,26 @@ libraryDependencies += ("org.apache.hadoop" % "hadoop-client" % hadoop_version
   exclude("org.mortbay.jetty", "servlet-api-2.5")
   exclude("javax.servlet", "servlet-api")
   exclude("junit", "junit")
-  exclude ("org.slf4j", "slf4j-log4j12")
-  exclude ("log4j", "log4j")
+  exclude("org.slf4j", "slf4j-log4j12")
+  exclude("log4j", "log4j")
   exclude("commons-beanutils", "commons-beanutils")
   exclude("org.apache.hadoop", "hadoop-yarn-api")
   exclude("com.sun.jersey", "jersey-server")
+  exclude("com.sun.jersey", "jersey-core")
+  exclude("com.sun.jersey", "jersey-core")
+  exclude("com.sun.jersey.contribs", "jersey-guice")
   exclude("org.eclipse.jetty", "jetty-server")
   exclude("org.eclipse.jetty", "jetty-plus")
   exclude("org.eclipse.jetty", "jetty-util")
   exclude("org.eclipse.jetty", "jetty-http")
   exclude("org.eclipse.jetty", "jetty-servlet")
-  exclude("commons-beanutils","commons-beanutils-core")
+  exclude("commons-beanutils", "commons-beanutils-core")
+  exclude("com.fasterxml.jackson.core", "jackson-core")
+  exclude("com.fasterxml.jackson.core", "jackson-annotations")
+  exclude("com.fasterxml.jackson.dataformat", "jackson-dataformat-smile")
+  exclude("com.fasterxml.jackson.datatype", "jackson-datatype-joda")
+  exclude("com.fasterxml.jackson.core", "jackson-databind")
+  exclude("io.netty", "netty")
   )
 
 libraryDependencies += "org.scalatest" %% "scalatest" % "2.2.4" % "test"
@@ -79,33 +98,31 @@ libraryDependencies += "io.druid" % "druid-processing" % druid_version % "provid
 libraryDependencies += "io.druid" % "druid-server" % druid_version % "provided"
 libraryDependencies += "io.druid" % "druid-indexing-service" % druid_version % "provided"
 libraryDependencies += "io.druid" % "druid-indexing-hadoop" % druid_version % "provided"
-libraryDependencies += "org.joda" % "joda-convert" % "1.8.1" % "provided" // Prevents intellij silliness and sbt warnings
-libraryDependencies += "com.google.guava" % "guava" % guava_version // Prevents serde problems for guice exceptions
-libraryDependencies += "com.sun.jersey" % "jersey-servlet" % "1.17.1"
-libraryDependencies += "org.xerial.snappy" % "snappy-java" % "1.1.2-M1"
-libraryDependencies += "com.metamx" %% "scala-util" % "1.11.7"
-
+libraryDependencies +=
+  "org.joda" % "joda-convert" % "1.8.1" % "provided" // Prevents intellij silliness and sbt warnings
+libraryDependencies += "com.google.guava" % "guava" % guava_version % "provided"// Prevents serde problems for guice exceptions
+libraryDependencies += "com.sun.jersey" % "jersey-servlet" % "1.17.1" % "provided"
 
 assemblyMergeStrategy in Compile := {
-  case PathList("javax", "servlet", xs @ _*)         => MergeStrategy.first
-  case PathList(ps @ _*) if ps.last endsWith ".html" => MergeStrategy.first
-  case PathList("org", "apache", "commons", "logging", xs @ _* )  => MergeStrategy.first
-  case PathList("javax", "annotation", xs @ _*) => MergeStrategy.last //favor jsr305
+  case PathList("javax", "servlet", xs@_*) => MergeStrategy.first
+  case PathList(ps@_*) if ps.last endsWith ".html" => MergeStrategy.first
+  case PathList("org", "apache", "commons", "logging", xs@_*) => MergeStrategy.first
+  case PathList("javax", "annotation", xs@_*) => MergeStrategy.last //favor jsr305
   case PathList("mime.types") => MergeStrategy.filterDistinctLines
-  case PathList("com", "google", "common", "base", xs @ _*) => MergeStrategy.last // spark-network-common pulls these in
-  case PathList("org", "apache", "spark", "unused", xs @ _*) => MergeStrategy.first
-  case PathList("META-INF", xs @ _*) => {
+  case PathList("com", "google", "common", "base", xs@_*) => MergeStrategy.last // spark-network-common pulls these in
+  case PathList("org", "apache", "spark", "unused", xs@_*) => MergeStrategy.first
+  case PathList("META-INF", xs@_*) => {
     xs map {
       _.toLowerCase
     } match {
       case ("manifest.mf" :: Nil) | ("index.list" :: Nil) | ("dependencies" :: Nil) =>
         MergeStrategy.discard
-      case ps @ (x :: xs) if ps.last.endsWith(".sf") || ps.last.endsWith(".dsa") =>
+      case ps@(x :: xs) if ps.last.endsWith(".sf") || ps.last.endsWith(".dsa") =>
         MergeStrategy.discard
       case "services" :: xs =>
         MergeStrategy.filterDistinctLines
       case "jersey-module-version" :: xs => MergeStrategy.first
-      case "sisu" :: xs=> MergeStrategy.discard
+      case "sisu" :: xs => MergeStrategy.discard
       case "maven" :: xs => MergeStrategy.discard
       case "plexus" :: xs => MergeStrategy.discard
       case _ => MergeStrategy.discard
@@ -117,25 +134,25 @@ assemblyMergeStrategy in Compile := {
 }
 
 assemblyMergeStrategy in assembly := {
-  case PathList("javax", "servlet", xs @ _*)         => MergeStrategy.first
-  case PathList(ps @ _*) if ps.last endsWith ".html" => MergeStrategy.first
-  case PathList("org", "apache", "commons", "logging", xs @ _* )  => MergeStrategy.first
-  case PathList("javax", "annotation", xs @ _*) => MergeStrategy.last //favor jsr305
+  case PathList("javax", "servlet", xs@_*) => MergeStrategy.first
+  case PathList(ps@_*) if ps.last endsWith ".html" => MergeStrategy.first
+  case PathList("org", "apache", "commons", "logging", xs@_*) => MergeStrategy.first
+  case PathList("javax", "annotation", xs@_*) => MergeStrategy.last //favor jsr305
   case PathList("mime.types") => MergeStrategy.filterDistinctLines
-  case PathList("com", "google", "common", "base", xs @ _*) => MergeStrategy.last // spark-network-common pulls these in
-  case PathList("org", "apache", "spark", "unused", xs @ _*) => MergeStrategy.first
-  case PathList("META-INF", xs @ _*) => {
+  case PathList("com", "google", "common", "base", xs@_*) => MergeStrategy.last // spark-network-common pulls these in
+  case PathList("org", "apache", "spark", "unused", xs@_*) => MergeStrategy.first
+  case PathList("META-INF", xs@_*) => {
     xs map {
       _.toLowerCase
     } match {
       case ("manifest.mf" :: Nil) | ("index.list" :: Nil) | ("dependencies" :: Nil) =>
         MergeStrategy.discard
-      case ps @ (x :: xs) if ps.last.endsWith(".sf") || ps.last.endsWith(".dsa") =>
+      case ps@(x :: xs) if ps.last.endsWith(".sf") || ps.last.endsWith(".dsa") =>
         MergeStrategy.discard
       case "services" :: xs =>
         MergeStrategy.filterDistinctLines
       case "jersey-module-version" :: xs => MergeStrategy.first
-      case "sisu" :: xs=> MergeStrategy.discard
+      case "sisu" :: xs => MergeStrategy.discard
       case "maven" :: xs => MergeStrategy.discard
       case "plexus" :: xs => MergeStrategy.discard
       case _ => MergeStrategy.discard
@@ -146,12 +163,12 @@ assemblyMergeStrategy in assembly := {
     oldStrategy(x)
 }
 
-artifact in (Compile, assembly) := {
-  val art = (artifact in (Compile, assembly)).value
+artifact in(Compile, assembly) := {
+  val art = (artifact in(Compile, assembly)).value
   art.copy(`classifier` = Some("assembly"))
 }
 
-addArtifact(artifact in (Compile, assembly), assembly)
+addArtifact(artifact in(Compile, assembly), assembly)
 
 resolvers += Resolver.mavenLocal
 resolvers += "JitPack.IO" at "https://jitpack.io"
@@ -167,14 +184,14 @@ pomExtra := (
     <url>https://github.com/metamx/druid-spark-batch.git</url>
     <connection>scm:git:git@github.com:metamx/druid-spark-batch.git</connection>
   </scm>
-  <developers>
-    <developer>
-      <name>Charles Allen</name>
-      <organization>Metamarkets Group Inc.</organization>
-      <organizationUrl>https://www.metamarkets.com</organizationUrl>
-    </developer>
-  </developers>
-)
+    <developers>
+      <developer>
+        <name>Charles Allen</name>
+        <organization>Metamarkets Group Inc.</organization>
+        <organizationUrl>https://www.metamarkets.com</organizationUrl>
+      </developer>
+    </developers>
+  )
 
 testOptions += Tests.Argument(TestFrameworks.JUnit, "-Duser.timezone=UTC")
 // WTF SBT?
