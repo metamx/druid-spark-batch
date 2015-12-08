@@ -46,7 +46,8 @@ object TestScalaBatchIndexTask
   val injector                                 = Initialization
     .makeInjectorWithModules(
       GuiceInjectors.makeStartupInjector(), List[Module](
-        new Module {
+        new Module
+        {
           override def configure(binder: Binder): Unit = {
             binder.bindConstant.annotatedWith(Names.named("serviceName")).to("druid/test")
             binder.bindConstant.annotatedWith(Names.named("servicePort")).to(0)
@@ -65,12 +66,11 @@ object TestScalaBatchIndexTask
       seqAsJavaList(
         Seq(
           "l_orderkey",
+          "l_partkey",
           "l_suppkey",
           "l_linenumber",
           "l_returnflag",
           "l_linestatus",
-          "l_commitdate",
-          "l_receiptdate",
           "l_shipinstruct",
           "l_shipmode",
           "l_comment"
@@ -83,7 +83,9 @@ object TestScalaBatchIndexTask
           "count",
           "l_quantity",
           "l_discount",
-          "l_extendedprice"
+          "l_extendedprice",
+          "l_commitdate",
+          "l_receiptdate"
         )
       ),
       null
@@ -148,7 +150,7 @@ object TestScalaBatchIndexTask
     aggFactories: Seq[AggregatorFactory] = aggFactories,
     granSpec: GranularitySpec = granSpec,
     mapper: ObjectMapper = objectMapper
-    ) = new DataSchema(
+  ) = new DataSchema(
     dataSource,
     objectMapper
       .convertValue(new StringInputRowParser(parseSpec, null), new TypeReference[java.util.Map[String, Any]]() {}),
@@ -169,7 +171,7 @@ object TestScalaBatchIndexTask
     context: Map[String, Object] = Map(),
     indexSpec: IndexSpec = indexSpec,
     classpathPrefix: String = classpathPrefix
-    ): SparkBatchIndexTask = new SparkBatchIndexTask(
+  ): SparkBatchIndexTask = new SparkBatchIndexTask(
     id,
     dataSchema,
     Seq(interval),

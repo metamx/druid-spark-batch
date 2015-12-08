@@ -209,43 +209,44 @@ object SparkDruidIndexer extends Logging
             val outPath = new Path(outPathString)
             val hadoopFs = outPath.getFileSystem(hadoopConf)
             val dimensions = dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec.getDimensions
+            val excludedDims = dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec.getDimensionExclusions
 
-            val file = IndexMerger.merge(
-              seqAsJavaList(
-                rows
-                  .grouped(rowsPerPersist)
-                  .map(
-                    _.foldLeft(
-                      closer.register(
-                        new OnheapIncrementalIndex(
-                          new IncrementalIndexSchema.Builder()
-                            .withDimensionsSpec(parser)
-                            .withQueryGranularity(dataSchema.getDelegate.getGranularitySpec.getQueryGranularity)
-                            .withMetrics(aggs.map(_.getDelegate))
-                            .withMinTimestamp(timeBucket)
-                            .build()
-                          , rowsPerPersist
-                        )
-                      )
-                    )(
-                      (index: OnheapIncrementalIndex, r) => {
-                        index.add(new MapBasedInputRow(r._1._1, dimensions, r._1._2))
-                        index
-                      }
+            val indices: util.List[IndexableAdapter] = rows.grouped(rowsPerPersist)
+              .map(
+                _.foldLeft(
+                  closer.register(
+                    new OnheapIncrementalIndex(
+                      new IncrementalIndexSchema.Builder()
+                        .withDimensionsSpec(parser)
+                        .withQueryGranularity(dataSchema.getDelegate.getGranularitySpec.getQueryGranularity)
+                        .withMetrics(aggs.map(_.getDelegate))
+                        .withMinTimestamp(timeBucket)
+                        .build()
+                      , rowsPerPersist
                     )
-                  ).map(
-                  (incIndex: OnheapIncrementalIndex) => {
-                    new QueryableIndexIndexableAdapter(
-                      closer.register(
-                        IndexIO.loadIndex(
-                          IndexMerger
-                            .persist(incIndex, timeInterval, tmpPersistDir, null, indexSpec_passable.getDelegate)
-                        )
-                      )
+                  )
+                )(
+                  (index: OnheapIncrementalIndex, r) => {
+                    index.add(
+                      index.formatRow(new MapBasedInputRow(r._1._1, (r._1._2.keySet() -- excludedDims).toList, r._1._2))
                     )
+                    index
                   }
-                ).toSeq
-              ),
+                )
+              ).map(
+              (incIndex: OnheapIncrementalIndex) => {
+                new QueryableIndexIndexableAdapter(
+                  closer.register(
+                    IndexIO.loadIndex(
+                      IndexMerger
+                        .persist(incIndex, timeInterval, tmpPersistDir, null, indexSpec_passable.getDelegate)
+                    )
+                  )
+                )
+              }
+            ).toList
+            val file = IndexMerger.merge(
+              indices,
               aggs.map(_.getDelegate),
               tmpMergeDir,
               null,
@@ -277,13 +278,16 @@ object SparkDruidIndexer extends Logging
                 }
               }
             )
+            val allDimensions: util.List[String] = indices.map(_.getDimensionNames).foldLeft(Set[String]())(_ ++ _)
+              .toList
+            logInfo("Found dimensions [%s]" format util.Arrays.deepToString(allDimensions.toArray))
             val dataSegment = JobHelper.serializeOutIndex(
               new DataSegment(
                 dataSource,
                 timeInterval,
                 dataSegmentVersion,
                 null,
-                dimensions,
+                allDimensions,
                 aggs.map(_.getDelegate.getName).toList,
                 if (partitionCount == 1) {
                   new NoneShardSpec()

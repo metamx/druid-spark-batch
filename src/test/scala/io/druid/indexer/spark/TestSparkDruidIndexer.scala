@@ -22,10 +22,12 @@ package io.druid.indexer.spark
 import java.io.{Closeable, File}
 import java.nio.file.Files
 
+import com.google.common.collect.ImmutableList
 import com.google.common.io.Closer
 import com.metamx.common.logger.Logger
 import com.metamx.common.{CompressionUtils, Granularity, IAE}
 import io.druid.common.utils.JodaUtils
+import io.druid.data.input.impl.{DimensionsSpec, JSONParseSpec, TimestampSpec}
 import io.druid.segment.{IndexIO, QueryableIndexIndexableAdapter}
 import org.apache.commons.io.FileUtils
 import org.apache.spark.{SparkConf, SparkContext}
@@ -96,7 +98,11 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         interval.contains(segment.getInterval) should be(true)
         segment.getInterval.contains(interval) should be(false)
         segment.getSize should be > 0L
-        segment.getDimensions should equal(dataSchema.getParser.getParseSpec.getDimensionsSpec.getDimensions)
+        segment.getDimensions.asScala.toSet should
+          equal(
+            dataSchema.getParser.getParseSpec.getDimensionsSpec.getDimensions.asScala.toSet --
+              dataSchema.getParser.getParseSpec.getDimensionsSpec.getDimensionExclusions.asScala.toSet
+          )
         segment.getMetrics.asScala.toList should equal(dataSchema.getAggregators.map(_.getName).toList)
         val file = new File(segment.getLoadSpec.get("path").toString)
         file.exists() should be(true)
@@ -107,8 +113,11 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         val index = IndexIO.loadIndex(segDir)
         try {
           val qindex = new QueryableIndexIndexableAdapter(index)
-          qindex.getDimensionNames.asScala.toList should
-            equal(dataSchema.getParser.getParseSpec.getDimensionsSpec.getDimensions.asScala.toList)
+          qindex.getDimensionNames.asScala.toSet should
+            equal(
+              dataSchema.getParser.getParseSpec.getDimensionsSpec.getDimensions.asScala.toSet --
+                dataSchema.getParser.getParseSpec.getDimensionsSpec.getDimensionExclusions.asScala.toSet
+            )
           for (dimension <- qindex.getDimensionNames.iterator().asScala) {
             val dimVal = qindex.getDimValueLookup(dimension).asScala
             dimVal should not be 'Empty
@@ -147,6 +156,95 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
               column.close()
             }
           }
+          index.getDataInterval.getEnd.getMillis should not be JodaUtils.MAX_INSTANT
+        }
+        finally {
+          index.close()
+        }
+      }
+    }
+    finally {
+      closer.close()
+    }
+  }
+
+
+  "The spark indexer" should "return proper DataSegments from json" in {
+    val data_files = Seq(this.getClass.getResource("/event.json").toString)
+    val closer = Closer.create()
+    val outDir = Files.createTempDirectory("segments").toFile
+    (outDir.mkdirs() || outDir.exists()) && outDir.isDirectory should be(true)
+    closer.register(
+      new Closeable()
+      {
+        override def close(): Unit = FileUtils.deleteDirectory(outDir)
+      }
+    )
+    try {
+      val conf = new SparkConf()
+        .setAppName("Simple Application")
+        .setMaster("local[4]")
+        .set("user.timezone", "UTC")
+        .set("file.encoding", "UTF-8")
+        .set("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager")
+        .set("org.jboss.logging.provider", "slf4j")
+        .set("druid.processing.columnCache.sizeBytes", "1000000000")
+        .set("spark.driver.host", "localhost")
+        .set("spark.executor.userClassPathFirst", "true")
+        .set("spark.driver.userClassPathFirst", "true")
+        .set("spark.kryo.referenceTracking", "false")
+        .registerKryoClasses(SparkBatchIndexTask.KRYO_CLASSES)
+
+      val sc = new SparkContext(conf)
+      closer.register(
+        new Closeable
+        {
+          override def close(): Unit = sc.stop()
+        }
+      )
+      val dataSchema = buildDataSchema(
+        parseSpec = new
+            JSONParseSpec(new TimestampSpec("ts", null, null), new DimensionsSpec(null, ImmutableList.of("ts"), null)),
+        aggFactories = Seq()
+      )
+
+      val loadResults = SparkDruidIndexer.loadData(
+        data_files,
+        new SerializedJson(dataSchema),
+        SparkBatchIndexTask.mapToSegmentIntervals(Seq(interval), Granularity.YEAR),
+        rowsPerPartition,
+        rowsPerFlush,
+        outDir.toString,
+        indexSpec,
+        sc
+      )
+      loadResults.length should be(1)
+      for (
+        segment <- loadResults
+      ) {
+        segment.getBinaryVersion should be(9)
+        segment.getDataSource should equal(dataSource)
+        interval.contains(segment.getInterval) should be(true)
+        segment.getInterval.contains(interval) should be(false)
+        segment.getSize should be > 0L
+        segment.getDimensions.asScala.toSet should equal(Set("dim1"))
+        segment.getMetrics.asScala.toList should equal(dataSchema.getAggregators.map(_.getName).toList)
+        val file = new File(segment.getLoadSpec.get("path").toString)
+        file.exists() should be(true)
+        val segDir = Files.createTempDirectory(outDir.toPath, "loadableSegment-%s" format segment.getIdentifier).toFile
+        val copyResult = CompressionUtils.unzip(file, segDir)
+        copyResult.size should be > 0L
+        copyResult.getFiles.asScala.map(_.getName).toSet should equal(Set("00000.smoosh", "meta.smoosh", "version.bin"))
+        val index = IndexIO.loadIndex(segDir)
+        try {
+          val qindex = new QueryableIndexIndexableAdapter(index)
+          qindex.getDimensionNames.asScala.toSet should equal(Set("dim1"))
+          val dimVal = qindex.getDimValueLookup("dim1").asScala
+          dimVal should not be 'Empty
+          for (dv <- dimVal) {
+            dv should equal("val1")
+          }
+          qindex.getNumRows should be(1)
           index.getDataInterval.getEnd.getMillis should not be JodaUtils.MAX_INSTANT
         }
         finally {
