@@ -318,14 +318,16 @@ object SparkDruidIndexer extends Logging
             Seq(new SerializedJson[DataSegment](finalDataSegment)).iterator
           }
           catch {
-            case t: Throwable => throw closer.rethrow(t)
+            case t: Throwable =>
+              logError("Error in partition [%d]" format index, t)
+              throw closer.rethrow(t)
           }
           finally {
             closer.close()
           }
         }
       )
-    val results = partitioned_data.cache().collect().map(_.getDelegate)
+    val results = partitioned_data.collect().map(_.getDelegate)
     logInfo("Finished with %s" format util.Arrays.deepToString(results.map(_.toString)))
     results.toSeq
   }
@@ -420,7 +422,7 @@ object SerializedJsonStatic extends Logging
 @SerialVersionUID(713838456349L)
 class SerializedJson[A](inputDelegate: A) extends KryoSerializable with Serializable
 {
-  @transient var delegate: A = inputDelegate
+  @transient var delegate: A = Option(inputDelegate).getOrElse(throw new NullPointerException())
 
   @throws[IOException]
   private def writeObject(output: ObjectOutputStream) = {
@@ -436,7 +438,7 @@ class SerializedJson[A](inputDelegate: A) extends KryoSerializable with Serializ
 
   def toJavaMap = mapAsJavaMap(
     Map(
-      "class" -> inputDelegate.getClass.getCanonicalName,
+      "class" -> delegate.getClass.getCanonicalName,
       "delegate" -> SerializedJsonStatic.mapper.writeValueAsString(delegate)
     )
   )
