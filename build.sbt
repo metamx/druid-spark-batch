@@ -103,11 +103,11 @@ pomPostProcess := {
   new RuleTransformer(new RewriteRule {
     override def transform(node: xml.Node) = node match {
       case n if (n \ "artifactId").text.equals("hadoop-client") =>
-        xml.Elem(n.prefix, n.label, n.attributes, n.scope, true, n.child ++ <scope>provided</scope> : _*)
+        xml.Elem(n.prefix, n.label, n.attributes, n.scope, n.child.filter(!_.label.equals("exclusions")) ++ <scope>provided</scope> : _*)
       case n if (n \ "artifactId").text.startsWith("spark-core") =>
-        xml.Elem(n.prefix, n.label, n.attributes, n.scope, true, n.child ++ <scope>provided</scope> : _*)
+        xml.Elem(n.prefix, n.label, n.attributes, n.scope, true,n.child.filter(!_.label.equals("exclusions")) ++ <scope>provided</scope> : _*)
       case n if (n \ "artifactId").text.equals("mesos") =>
-        xml.Elem(n.prefix, n.label, n.attributes, n.scope, true, n.child ++ <scope>provided</scope> : _*)
+        xml.Elem(n.prefix, n.label, n.attributes, n.scope, true, n.child.filter(!_.label.equals("exclusions")) ++ <scope>provided</scope> : _*)
       case _ => node
     }
   })
