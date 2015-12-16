@@ -32,7 +32,7 @@ val druid_version = "e0c8883"
 // This is just used here for Path, so anything that doesn't break spark should be fine
 val hadoop_version = "2.4.0"
 // Requires a patch for https://issues.apache.org/jira/browse/SPARK-11016
-val spark_version = "1.5.1-mmx4"
+val spark_version = "1.5.2-mmx0"
 val guava_version = "16.0.1"
 
 val sparkDep = ("org.apache.spark" %% "spark-core" % spark_version
