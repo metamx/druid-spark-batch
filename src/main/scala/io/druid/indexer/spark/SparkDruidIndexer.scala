@@ -88,10 +88,31 @@ object SparkDruidIndexer extends Logging
 
     logInfo("Splitting [%s] gz bytes into [%s] partitions" format(totalGZSize, startingPartitions))
 
-    val baseData = sc.textFile(dataFiles mkString ",") // Hadoopify the data so it doesn't look so silly in Spark's DAG
+    // Hadoopify the data so it doesn't look so silly in Spark's DAG
+    val baseData = sc.textFile(dataFiles mkString ",")
+      // Input data is probably in gigantic files, so redistribute
+      .filter(
+        s => {
+          val row = dataSchema.getDelegate.getParser match {
+            case x: StringInputRowParser => x.parse(s)
+            case x: HadoopyStringInputRowParser => x.parse(s)
+            case x: ProtoBufInputRowParser => throw new
+                UnsupportedOperationException("Cannot use Protobuf for text input")
+            case x =>
+              logTrace(
+                s"Could not figure out how to handle class [${x.getClass.getCanonicalName}]. Hoping it can handle string input"
+              )
+              x.asInstanceOf[InputRowParser[Any]].parse(s)
+          }
+          passableIntervals.exists(_.contains(row.getTimestamp))
+        }
+      )
       .repartition(startingPartitions)
+      // Persist the strings only rather than the event map
+      // We have to do the parsing twice this way, but serde of the map is killer as well
+      .persist(StorageLevel.DISK_ONLY)
       .mapPartitions(
-        (it) => {
+        it => {
           val i = dataSchema.getDelegate.getParser match {
             case x: StringInputRowParser => it.map(x.parse)
             case x: HadoopyStringInputRowParser => it.map(x.parse)
@@ -104,23 +125,20 @@ object SparkDruidIndexer extends Logging
               )
               it.map(x.asInstanceOf[InputRowParser[Any]].parse)
           }
-          i.filter(r => passableIntervals.exists(_.contains(r.getTimestamp)))
-            .map(
-              r => {
-                val queryGran = dataSchema.getDelegate.getGranularitySpec.getQueryGranularity
-                val segmentGran = dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity
-                var k: Long = queryGran.truncate(r.getTimestampFromEpoch)
-                if (k < 0) {
-                  // Example: AllGranularity
-                  k = segmentGran.truncate(new DateTime(r.getTimestampFromEpoch)).getMillis
-                }
-                k -> r.asInstanceOf[MapBasedInputRow].getEvent
+          val queryGran = dataSchema.getDelegate.getGranularitySpec.getQueryGranularity
+          val segmentGran = dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity
+          i.map(
+            r => {
+              var k: Long = queryGran.truncate(r.getTimestampFromEpoch)
+              if (k < 0) {
+                // Example: AllGranularity
+                k = segmentGran.truncate(new DateTime(r.getTimestampFromEpoch)).getMillis
               }
-            )
-        },
-        preservesPartitioning = false
+              k -> r.asInstanceOf[MapBasedInputRow].getEvent
+            }
+          )
+        }
       )
-      .persist(StorageLevel.DISK_ONLY)
 
     logInfo("Starting uniqes")
     val partitionMap: Map[Long, Long] = baseData
