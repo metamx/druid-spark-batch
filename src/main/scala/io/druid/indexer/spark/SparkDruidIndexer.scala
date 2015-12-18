@@ -248,19 +248,17 @@ object SparkDruidIndexer extends Logging
             val indices: util.List[IndexableAdapter] = rows.grouped(rowsPerPersist)
               .map(
                 _.foldLeft(
-                  closer.register(
-                    new OnheapIncrementalIndex(
-                      new IncrementalIndexSchema.Builder()
-                        .withDimensionsSpec(parser)
-                        .withQueryGranularity(
-                          dataSchema.getDelegate
-                            .getGranularitySpec.getQueryGranularity
-                        )
-                        .withMetrics(aggs.map(_.getDelegate))
-                        .withMinTimestamp(timeBucket)
-                        .build()
-                      , rowsPerPersist
-                    )
+                  new OnheapIncrementalIndex(
+                    new IncrementalIndexSchema.Builder()
+                      .withDimensionsSpec(parser)
+                      .withQueryGranularity(
+                        dataSchema.getDelegate
+                          .getGranularitySpec.getQueryGranularity
+                      )
+                      .withMetrics(aggs.map(_.getDelegate))
+                      .withMinTimestamp(timeBucket)
+                      .build()
+                    , rowsPerPersist
                   )
                 )(
                   (index: OnheapIncrementalIndex, r) => {
@@ -278,7 +276,7 @@ object SparkDruidIndexer extends Logging
                 )
               ).map(
               (incIndex: OnheapIncrementalIndex) => {
-                new QueryableIndexIndexableAdapter(
+                val adapter = new QueryableIndexIndexableAdapter(
                   closer.register(
                     IndexIO.loadIndex(
                       IndexMerger
@@ -292,6 +290,12 @@ object SparkDruidIndexer extends Logging
                     )
                   )
                 )
+                // TODO: figure out a guaranteed way to close OnheapIncrementalIndex
+                // without holding a hard reference in closer
+                // It doesn't actually close anything FOR NOW
+                // But will need to close for future proofing
+                incIndex.close()
+                adapter
               }
             ).toList
             val file = IndexMerger.merge(
