@@ -69,7 +69,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         .set("spark.executor.userClassPathFirst", "true")
         .set("spark.driver.userClassPathFirst", "true")
         .set("spark.kryo.referenceTracking", "false")
-        .registerKryoClasses(SparkBatchIndexTask.KRYO_CLASSES)
+        .registerKryoClasses(SparkBatchIndexTask.getKryoClasses())
 
       val sc = new SparkContext(conf)
       closer.register(
@@ -110,7 +110,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         val copyResult = CompressionUtils.unzip(file, segDir)
         copyResult.size should be > 0L
         copyResult.getFiles.asScala.map(_.getName).toSet should equal(Set("00000.smoosh", "meta.smoosh", "version.bin"))
-        val index = IndexIO.loadIndex(segDir)
+        val index = StaticIndex.INDEX_IO.loadIndex(segDir)
         try {
           val qindex = new QueryableIndexIndexableAdapter(index)
           qindex.getDimensionNames.asScala.toSet should
@@ -193,7 +193,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         .set("spark.executor.userClassPathFirst", "true")
         .set("spark.driver.userClassPathFirst", "true")
         .set("spark.kryo.referenceTracking", "false")
-        .registerKryoClasses(SparkBatchIndexTask.KRYO_CLASSES)
+        .registerKryoClasses(SparkBatchIndexTask.getKryoClasses())
 
       val sc = new SparkContext(conf)
       closer.register(
@@ -235,7 +235,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         val copyResult = CompressionUtils.unzip(file, segDir)
         copyResult.size should be > 0L
         copyResult.getFiles.asScala.map(_.getName).toSet should equal(Set("00000.smoosh", "meta.smoosh", "version.bin"))
-        val index = IndexIO.loadIndex(segDir)
+        val index = StaticIndex.INDEX_IO.loadIndex(segDir)
         try {
           val qindex = new QueryableIndexIndexableAdapter(index)
           qindex.getDimensionNames.asScala.toSet should equal(Set("dim1"))
