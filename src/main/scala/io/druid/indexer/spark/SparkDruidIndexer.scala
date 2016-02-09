@@ -652,5 +652,5 @@ object StaticIndex {
   val INDEX_IO = new IndexIO(SerializedJsonStatic.mapper, new ColumnConfig {
     override def columnCacheSizeBytes(): Int = 1000000
   })
-  val INDEX_MERGER = new IndexMergerV9(SerializedJsonStatic.mapper, INDEX_IO);
+  val INDEX_MERGER = new IndexMerger(SerializedJsonStatic.mapper, INDEX_IO);
 }
