@@ -257,8 +257,4 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
 
     task1 should not equal buildSparkBatchIndexTask(classpathPrefix = "someOther.jar")
   }
-
-  "The scala version matchers" should "properly parse the version" in {
-    SparkBatchIndexTask.SCALA_VERSION should be("2.10")
-  }
 }
