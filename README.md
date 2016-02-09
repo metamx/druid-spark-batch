@@ -21,18 +21,19 @@ To use this extension, the hadoop client libraries and spark assembly (which mig
 
 ## How to use
 
-There are three key things that need configured to use this extension
+There are four key things that need configured to use this extension
 
-1. Overlord needs the `druid-spark-batch` extension module added.
-2. MiddleManager (if present) needs the `druid-spark-batch` extension module added.
+1. Overlord needs the `druid-spark-batch` extension added.
+2. MiddleManager (if present) needs the `druid-spark-batch` extension added.
 3. A task json needs configured.
+4. Spark is included in the default hadoop coordinates similar to `druid.indexer.task.defaultHadoopCoordinates=["org.apache.spark:spark-core_2.10:1.5.2-mmx0"]`
 
 To load the extension, use the appropriate coordinates (for druid 0.8.x ) or make certain the extension jars are located in the proper directories (druid 0.9.x and later)
 
 ## Task JSON
 The following is an example spark batch task for the indexing service:
 
-```
+```json
 {
     "dataFiles":["file:///Users/charlesallen/bin/wrk/lineitem.small.tbl"],
     "dataSchema": {

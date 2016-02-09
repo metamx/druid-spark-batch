@@ -38,6 +38,7 @@ import io.druid.indexer.{HadoopyStringInputRowParser, JobHelper}
 import io.druid.initialization.Initialization
 import io.druid.query.aggregation.AggregatorFactory
 import io.druid.segment._
+import io.druid.segment.column.ColumnConfig
 import io.druid.segment.incremental.{IncrementalIndexSchema, OnheapIncrementalIndex}
 import io.druid.segment.indexing.DataSchema
 import io.druid.segment.loading.DataSegmentPusher
@@ -278,13 +279,12 @@ object SparkDruidIndexer extends Logging
               (incIndex: OnheapIncrementalIndex) => {
                 val adapter = new QueryableIndexIndexableAdapter(
                   closer.register(
-                    IndexIO.loadIndex(
-                      IndexMerger
+                    StaticIndex.INDEX_IO.loadIndex(
+                      StaticIndex.INDEX_MERGER
                         .persist(
                           incIndex,
                           timeInterval,
                           tmpPersistDir,
-                          null, // segmentMetadata not needed yet
                           indexSpec_passable.getDelegate
                         )
                     )
@@ -298,11 +298,10 @@ object SparkDruidIndexer extends Logging
                 adapter
               }
             ).toList
-            val file = IndexMerger.merge(
+            val file = StaticIndex.INDEX_MERGER.merge(
               indices,
               aggs.map(_.getDelegate),
               tmpMergeDir,
-              null,
               indexSpec_passable.getDelegate,
               new ProgressIndicator
               {
@@ -390,6 +389,7 @@ object SparkDruidIndexer extends Logging
   /**
     * Take a map of indices and size for that index, and return a map of (index, sub_index)->new_index
     * each new_index of which can have at most rowsPerPartition assuming random-ish hashing into the indices
+    *
     * @param inMap A map of index to count of items in that index
     * @param rowsPerPartition The maximum desired size per output index.
     * @return A map of (index, sub_index)->new_index . The size of this map times rowsPerPartition is greater than
@@ -646,4 +646,11 @@ class DateBucketAndHashPartitioner(gran: Granularity, partMap: Map[(Long, Long),
       partOpt.get
     case x => throw new IAE(s"Unknown type [$x]")
   }
+}
+
+object StaticIndex {
+  val INDEX_IO = new IndexIO(SerializedJsonStatic.mapper, new ColumnConfig {
+    override def columnCacheSizeBytes(): Int = 1000000
+  })
+  val INDEX_MERGER = new IndexMergerV9(SerializedJsonStatic.mapper, INDEX_IO);
 }

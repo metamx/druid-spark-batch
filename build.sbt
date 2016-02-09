@@ -28,12 +28,13 @@ scalaVersion := "2.10.5"
 crossScalaVersions := Seq("2.10.5", "2.11.7")
 
 // Requires 0.8.2 or later and https://github.com/druid-io/druid/pull/1940
-val druid_version = "e0c8883"
+val druid_version = "0.9.0-SNAPSHOT"
 // This is just used here for Path, so anything that doesn't break spark should be fine
 val hadoop_version = "2.4.0"
 // Requires a patch for https://issues.apache.org/jira/browse/SPARK-11016
 val spark_version = "1.5.2-mmx0"
 val guava_version = "16.0.1"
+val mesos_version = "0.25.0"
 
 val sparkDep = ("org.apache.spark" %% "spark-core" % spark_version
   exclude("org.roaringbitmap", "RoaringBitmap")
@@ -60,7 +61,7 @@ val sparkDep = ("org.apache.spark" %% "spark-core" % spark_version
   exclude("com.fasterxml.jackson.core", "jackson-databind")
   exclude("io.netty", "netty")
   exclude("org.apache.mesos", "mesos")
-  )
+  ) % "provided"
 libraryDependencies += sparkDep
 
 val hadoopDep = ("org.apache.hadoop" % "hadoop-client" % hadoop_version
@@ -92,26 +93,10 @@ val hadoopDep = ("org.apache.hadoop" % "hadoop-client" % hadoop_version
   exclude("com.fasterxml.jackson.datatype", "jackson-datatype-joda")
   exclude("com.fasterxml.jackson.core", "jackson-databind")
   exclude("io.netty", "netty")
-  )
+  ) % "provided"
 // For Path
 libraryDependencies += hadoopDep
 
-// Pom will list them as compile dependencies even though they are in a fat jar.
-// As such we add the provided scope to their artifacts
-pomPostProcess := {
-  import xml.transform._
-  new RuleTransformer(new RewriteRule {
-    override def transform(node: xml.Node) = node match {
-      case n if (n \ "artifactId").text.equals("hadoop-client") =>
-        xml.Elem(n.prefix, n.label, n.attributes, n.scope, n.child.filter(!_.label.equals("exclusions")) ++ <scope>provided</scope> : _*)
-      case n if (n \ "artifactId").text.startsWith("spark-core") =>
-        xml.Elem(n.prefix, n.label, n.attributes, n.scope, true,n.child.filter(!_.label.equals("exclusions")) ++ <scope>provided</scope> : _*)
-      case n if (n \ "artifactId").text.equals("mesos") =>
-        xml.Elem(n.prefix, n.label, n.attributes, n.scope, true, n.child.filter(!_.label.equals("exclusions")) ++ <scope>provided</scope> : _*)
-      case _ => node
-    }
-  })
-}
 libraryDependencies += "org.scalatest" %% "scalatest" % "2.2.4" % "test"
 libraryDependencies += "io.druid" % "druid-processing" % druid_version % "provided"
 libraryDependencies += "io.druid" % "druid-server" % druid_version % "provided"
@@ -121,8 +106,8 @@ libraryDependencies +=
   "org.joda" % "joda-convert" % "1.8.1" % "provided" // Prevents intellij silliness and sbt warnings
 libraryDependencies += "com.google.guava" % "guava" % guava_version % "provided"// Prevents serde problems for guice exceptions
 libraryDependencies += "com.sun.jersey" % "jersey-servlet" % "1.17.1" % "provided"
-// TODO: make this not part of the package
-libraryDependencies += "org.apache.mesos" % "mesos"  % "0.25.0" classifier "shaded-protobuf"
+
+libraryDependencies += "org.apache.mesos" % "mesos"  % mesos_version % "provided"  classifier "shaded-protobuf"
 
 assemblyMergeStrategy in assembly := {
   case PathList("javax", "servlet", xs@_*) => MergeStrategy.first
@@ -132,7 +117,7 @@ assemblyMergeStrategy in assembly := {
   case PathList("mime.types") => MergeStrategy.filterDistinctLines
   case PathList("com", "google", "common", "base", xs@_*) => MergeStrategy.last // spark-network-common pulls these in
   case PathList("org", "apache", "spark", "unused", xs@_*) => MergeStrategy.first
-  case PathList("META-INF", xs@_*) => {
+  case PathList("META-INF", xs@_*) =>
     xs map {
       _.toLowerCase
     } match {
@@ -148,20 +133,10 @@ assemblyMergeStrategy in assembly := {
       case "plexus" :: xs => MergeStrategy.discard
       case _ => MergeStrategy.discard
     }
-  }
   case x =>
     val oldStrategy = (assemblyMergeStrategy in assembly).value
     oldStrategy(x)
 }
-
-// Scala lib is not assembled in fat jar due to pom annoying-ness
-assemblyOption in assembly := (assemblyOption in assembly).value.copy(includeScala = false)
-artifact in(Compile, assembly) := {
-  val art = (artifact in(Compile, assembly)).value
-  art.copy(`classifier` = Some("assembly"))
-}
-
-addArtifact(artifact in(Compile, assembly), assembly)
 
 resolvers += Resolver.mavenLocal
 resolvers += "JitPack.IO" at "https://jitpack.io"

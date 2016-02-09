@@ -87,15 +87,7 @@ class SparkBatchIndexTask(
     id
   },
   dataSchema.getDataSource,
-  List[String](
-    "%s:%s_%s:jar:assembly:%s" format
-      (
-        classOf[SparkBatchIndexTask].getPackage.getImplementationVendor,
-        classOf[SparkBatchIndexTask].getPackage.getImplementationTitle,
-        SparkBatchIndexTask.SCALA_VERSION,
-        classOf[SparkBatchIndexTask].getPackage.getImplementationVersion
-        )
-  ),
+  null,
   if (context == null) {
     Map[String, String]()
   }
@@ -207,8 +199,7 @@ class SparkBatchIndexTask(
 
   @throws(classOf[Exception])
   override def isReady(taskActionClient: TaskActionClient): Boolean = taskActionClient
-    .submit(new LockTryAcquireAction(lockInterval))
-    .isPresent
+    .submit(new LockTryAcquireAction(lockInterval)) != null
 
   @JsonProperty("id")
   override def getId = super.getId
@@ -251,21 +242,6 @@ object SparkBatchIndexTask
   private val DEFAULT_ROW_FLUSH_BOUNDARY   : Int    = 80000
   private val DEFAULT_TARGET_PARTITION_SIZE: Long   = 5000000L
   private val CHILD_PROPERTY_PREFIX        : String = "druid.indexer.fork.property."
-  private val SCALA_VERSION_REGEX                   = """$(\d+\.\d+)""".r
-  val SCALA_VERSION: String = scala.util.Properties.versionNumberString match {
-    case SCALA_VERSION_REGEX(major) => major
-    case _ => "2.10"
-  }
-  val KRYO_CLASSES          = Array(
-    classOf[SerializedHadoopConfig],
-    classOf[SerializedJson[DataSegment]],
-    classOf[SerializedJson[QueryGranularity]],
-    classOf[SerializedJson[QueryGranularity]],
-    classOf[SerializedJson[AggregatorFactory]],
-    classOf[SerializedJson[ParseSpec]],
-    classOf[SerializedJson[IndexSpec]],
-    classOf[SerializedJson[DataSchema]]
-  ).asInstanceOf[Array[Class[_]]]
   val log                   = new Logger(SparkBatchIndexTask.getClass)
   val TASK_TYPE             = "index_spark"
 
@@ -286,6 +262,17 @@ object SparkBatchIndexTask
     "hadoop"
   )
 
+  def getKryoClasses() = Array(
+    classOf[SerializedHadoopConfig],
+    classOf[SerializedJson[DataSegment]],
+    classOf[SerializedJson[QueryGranularity]],
+    classOf[SerializedJson[QueryGranularity]],
+    classOf[SerializedJson[AggregatorFactory]],
+    classOf[SerializedJson[ParseSpec]],
+    classOf[SerializedJson[IndexSpec]],
+    classOf[SerializedJson[DataSchema]]
+  ).asInstanceOf[Array[Class[_]]]
+
   def runTask(args: java.util.ArrayList[String]): java.util.ArrayList[String] = {
     val task = SerializedJsonStatic.mapper.readValue(args.get(0), classOf[SparkBatchIndexTask])
     val conf = new SparkConf()
@@ -304,7 +291,7 @@ object SparkBatchIndexTask
       // registerKryoClasses already does the below two lines
       //.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
       //.set("spark.kryo.classesToRegister", SparkBatchIndexTask.KRYO_CLASSES.map(_.getCanonicalName).mkString(","))
-      .registerKryoClasses(SparkBatchIndexTask.KRYO_CLASSES)
+      .registerKryoClasses(SparkBatchIndexTask.getKryoClasses())
 
     val propertiesToSet = new Properties()
     propertiesToSet.setProperty("druid.extensions.searchCurrentClassloader", "true")
@@ -403,15 +390,8 @@ object SparkBatchIndexTask
 
       val injector: Injector = GuiceInjectors.makeStartupInjector
       val extensionsConfig: ExtensionsConfig = injector.getInstance(classOf[ExtensionsConfig])
-      val aetherClient: DefaultTeslaAether = Initialization.getAetherClient(extensionsConfig)
 
-      val extensionJars = extensionsConfig.getCoordinates.flatMap(
-        x => {
-          val coordinateLoader: ClassLoader = Initialization
-            .getClassLoaderForCoordinates(aetherClient, x, extensionsConfig.getDefaultVersion)
-          coordinateLoader.asInstanceOf[URLClassLoader].getURLs
-        }
-      ).foldLeft(List[URL]())(_ ++ List(_)).map(_.toString)
+      val extensionJars = Initialization.getExtensionFilesToLoad(extensionsConfig)
 
       var classpathProperty: String = System.getProperty("druid.hadoop.internal.classpath")
       if (classpathProperty == null) {
@@ -432,10 +412,10 @@ object SparkBatchIndexTask
         }
       )
 
-      extensionJars.filter(_.endsWith(".jar")).foreach(
+      extensionJars.filter(_.getName.endsWith(".jar")).foreach(
         x => {
           log.info("Adding extension jar [%s]", x)
-          sc.addJar(x)
+          sc.addJar(x.getAbsolutePath)
         }
       )
 
