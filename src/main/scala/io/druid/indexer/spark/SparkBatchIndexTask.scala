@@ -250,7 +250,7 @@ object SparkBatchIndexTask
   }
 
   // Properties which do not carry over to executors
-  private [SparkBatchIndexTask] val forbiddenProperties = Seq("druid.extensions.coordinates")
+  private [SparkBatchIndexTask] val forbiddenProperties = Seq("druid.extensions.coordinates", "druid.extensions.loadList")
 
   // See io.druid.indexing.overlord.config.ForkingTaskRunnerConfig.allowedPrefixes
   // We don't include tmp.dir
