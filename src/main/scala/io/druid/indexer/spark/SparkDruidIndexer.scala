@@ -29,6 +29,7 @@ import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.common.io.Closer
 import com.google.inject.{Binder, Injector, Key, Module}
+import com.metamx.common.logger.Logger
 import com.metamx.common.{Granularity, IAE, ISE}
 import io.druid.data.input.impl._
 import io.druid.data.input.{MapBasedInputRow, ProtoBufInputRowParser}
@@ -412,8 +413,9 @@ object SparkDruidIndexer extends Logging
     )
 }
 
-object SerializedJsonStatic extends Logging
+object SerializedJsonStatic
 {
+  val LOG = new Logger("io.druid.indexer.spark.SerializedJsonStatic")
   lazy val injector: Injector     = {
     try {
       Initialization.makeInjectorWithModules(
@@ -434,7 +436,7 @@ object SerializedJsonStatic extends Logging
     }
     catch {
       case NonFatal(e) =>
-        logError("Error initializing injector", e)
+        LOG.error(e, "Error initializing injector")
         throw e
     }
   }
@@ -448,7 +450,7 @@ object SerializedJsonStatic extends Logging
     }
     catch {
       case NonFatal(e) =>
-        logError("Error getting object mapper instance", e)
+        LOG.error(e, "Error getting object mapper instance")
         throw e
     }
   }
@@ -467,7 +469,7 @@ object SerializedJsonStatic extends Logging
     }
   }
 
-  def getLog = log
+  def getLog = LOG
 
   val mapTypeReference = new TypeReference[java.util.Map[String, Object]] {}
 }
