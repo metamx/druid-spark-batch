@@ -336,22 +336,23 @@ object SparkDruidIndexer extends Logging
               .foldLeft(Set[String]())(_ ++ _)
               .toList
             logInfo(s"Found dimensions [${util.Arrays.deepToString(allDimensions.toArray)}]")
+            val dataSegmentTemplate = new DataSegment(
+              dataSource,
+              timeInterval,
+              dataSegmentVersion,
+              null,
+              allDimensions,
+              aggs.map(_.getDelegate.getName).toList,
+              if (partitionCount == 1) {
+                new NoneShardSpec()
+              } else {
+                new NumberedShardSpec(partitionNum, partitionCount)
+              },
+              -1,
+              -1
+            )
             val dataSegment = JobHelper.serializeOutIndex(
-              new DataSegment(
-                dataSource,
-                timeInterval,
-                dataSegmentVersion,
-                null,
-                allDimensions,
-                aggs.map(_.getDelegate.getName).toList,
-                if (partitionCount == 1) {
-                  new NoneShardSpec()
-                } else {
-                  new NumberedShardSpec(partitionNum, partitionCount)
-                },
-                -1,
-                -1
-              ),
+              dataSegmentTemplate,
               hadoopConf,
               new Progressable
               {
@@ -362,10 +363,7 @@ object SparkDruidIndexer extends Logging
               JobHelper.makeSegmentOutputPath(
                 outPath,
                 hadoopFs,
-                dataSource,
-                dataSegmentVersion,
-                timeInterval,
-                index
+                dataSegmentTemplate
               )
             )
             val finalDataSegment = pusher.push(file, dataSegment)
