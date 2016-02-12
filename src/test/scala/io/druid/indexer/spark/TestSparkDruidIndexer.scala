@@ -28,7 +28,8 @@ import com.metamx.common.logger.Logger
 import com.metamx.common.{CompressionUtils, Granularity, IAE}
 import io.druid.common.utils.JodaUtils
 import io.druid.data.input.impl.{DimensionsSpec, JSONParseSpec, TimestampSpec}
-import io.druid.segment.{IndexIO, QueryableIndexIndexableAdapter}
+import io.druid.query.aggregation.LongSumAggregatorFactory
+import io.druid.segment._
 import org.apache.commons.io.FileUtils
 import org.apache.spark.{SparkConf, SparkContext}
 import org.joda.time.{DateTime, Interval}
@@ -202,10 +203,12 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
           override def close(): Unit = sc.stop()
         }
       )
+      val aggName = "agg_met1"
+      val aggregatorFactory = new LongSumAggregatorFactory(aggName, "met1")
       val dataSchema = buildDataSchema(
         parseSpec = new
             JSONParseSpec(new TimestampSpec("ts", null, null), new DimensionsSpec(ImmutableList.of("dim1"), ImmutableList.of("ts"), null), null, null),
-        aggFactories = Seq()
+        aggFactories = Seq(aggregatorFactory)
       )
 
       val loadResults = SparkDruidIndexer.loadData(
@@ -244,7 +247,10 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
           for (dv <- dimVal) {
             dv should equal("val1")
           }
+          qindex.getMetricNames.asScala.toSet should equal(Set(aggName))
+          qindex.getMetricType(aggName) should equal(aggregatorFactory.getTypeName)
           qindex.getNumRows should be(1)
+          qindex.getRows.asScala.head.getMetrics()(0) should be(1)
           index.getDataInterval.getEnd.getMillis should not be JodaUtils.MAX_INSTANT
         }
         finally {
