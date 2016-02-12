@@ -56,8 +56,7 @@ import org.joda.time.{DateTime, Interval}
 import scala.collection.JavaConversions._
 import scala.util.control.NonFatal
 
-object SparkDruidIndexer extends Logging
-{
+object SparkDruidIndexer extends Logging {
   def loadData(
     dataFiles: Seq[String],
     dataSchema: SerializedJson[DataSchema],
@@ -123,8 +122,8 @@ object SparkDruidIndexer extends Logging
                 UnsupportedOperationException("Cannot use Protobuf for text input")
             case x =>
               logTrace(
-                s"Could not figure out how to handle class " +
-                  "[${x.getClass.getCanonicalName}]. " +
+                "Could not figure out how to handle class " +
+                  s"[${x.getClass.getCanonicalName}]. " +
                   "Hoping it can handle string input"
               )
               it.map(x.asInstanceOf[InputRowParser[Any]].parse)
@@ -145,22 +144,25 @@ object SparkDruidIndexer extends Logging
       )
 
     logInfo("Starting uniqes")
-    val partitionMap: Map[Long, Long] = baseData
-      .countApproxDistinctByKey(
-        0.05,
-        new DateBucketPartitioner(
-          dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity,
-          passableIntervals
-        )
+    var uniquesEvents = baseData
+    if (dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec.hasCustomDimensions) {
+      val parseSpec = dataSchema.getDelegate.getParser.getParseSpec
+      val dims: Set[String] = (Set[String]() ++ parseSpec.getDimensionsSpec.getDimensions) -- parseSpec.getDimensionsSpec.getDimensionExclusions
+      uniquesEvents = baseData.mapValues(_.filterKeys(dims.contains))
+    }
+
+    val partitionMap: Map[Long, Long] = uniquesEvents.countApproxDistinctByKey(
+      0.05,
+      new DateBucketPartitioner(
+        dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity,
+        passableIntervals
       )
-      .map(
-        x => dataSchema.getDelegate.getGranularitySpec
-          .getSegmentGranularity
-          .truncate(new DateTime(x._1))
-          .getMillis -> x._2
-      )
-      .reduceByKey(_ + _)
-      .collect().toMap
+    ).map(
+      x => dataSchema.getDelegate.getGranularitySpec
+        .getSegmentGranularity
+        .truncate(new DateTime(x._1))
+        .getMillis -> x._2
+    ).reduceByKey(_ + _).collect().toMap
 
     // Map key tuple is DateBucket, PartitionInBucket with map value of Partition #
     val hashToPartitionMap: Map[(Long, Long), Int] = getSizedPartitionMap(
@@ -220,16 +222,14 @@ object SparkDruidIndexer extends Logging
           val tmpMergeDir = Files.createTempDirectory("merge").toFile
           val closer = Closer.create()
           closer.register(
-            new Closeable
-            {
+            new Closeable {
               override def close(): Unit = {
                 FileUtils.deleteDirectory(tmpPersistDir)
               }
             }
           )
           closer.register(
-            new Closeable
-            {
+            new Closeable {
               override def close(): Unit = {
                 FileUtils.deleteDirectory(tmpMergeDir)
               }
@@ -240,10 +240,9 @@ object SparkDruidIndexer extends Logging
             val hadoopConf = hadoopConfig.getDelegate
             val outPath = new Path(outPathString)
             val hadoopFs = outPath.getFileSystem(hadoopConf)
-            val dimensions = dataSchema.getDelegate.getParser.getParseSpec
-              .getDimensionsSpec.getDimensions
-            val excludedDims = dataSchema.getDelegate.getParser.getParseSpec
-              .getDimensionsSpec.getDimensionExclusions
+            val dimSpec = dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec
+            val excludedDims = dimSpec.getDimensionExclusions
+            val finalDims = if (dimSpec.hasCustomDimensions) dimSpec.getDimensions -- excludedDims else null
 
             val indices: util.List[IndexableAdapter] = rows.grouped(rowsPerPersist)
               .map(
@@ -266,7 +265,7 @@ object SparkDruidIndexer extends Logging
                       index.formatRow(
                         new MapBasedInputRow(
                           r._1._1,
-                          (r._1._2.keySet() -- excludedDims).toList,
+                          if (dimSpec.hasCustomDimensions) finalDims else (r._1._2.keySet() -- excludedDims).toList,
                           r._1._2
                         )
                       )
@@ -304,8 +303,7 @@ object SparkDruidIndexer extends Logging
               tmpMergeDir,
               null,
               indexSpec_passable.getDelegate,
-              new ProgressIndicator
-              {
+              new ProgressIndicator {
                 override def stop(): Unit = {
                   logTrace("Stop")
                 }
@@ -353,8 +351,7 @@ object SparkDruidIndexer extends Logging
                 -1
               ),
               hadoopConf,
-              new Progressable
-              {
+              new Progressable {
                 override def progress(): Unit = logDebug("Progress")
               },
               new TaskAttemptID(new org.apache.hadoop.mapred.TaskID(), index),
@@ -442,7 +439,7 @@ object SerializedJsonStatic extends Logging
   // But https://github.com/FasterXML/jackson-databind/issues/696 isn't until 4.5.1, and anything 4.5 or greater breaks
   // EVERYTHING
   // So instead we have to capture the close
-  lazy val mapper  : ObjectMapper = {
+  lazy val mapper: ObjectMapper = {
     try {
       injector.getInstance(Key.get(classOf[ObjectMapper], classOf[Json]))
     }
@@ -454,8 +451,7 @@ object SerializedJsonStatic extends Logging
   }
 
   def captureCloseOutputStream(ostream: OutputStream): OutputStream =
-    new FilterOutputStream(ostream)
-    {
+    new FilterOutputStream(ostream) {
       override def close(): Unit = {
         // Ignore
       }
@@ -477,8 +473,7 @@ object SerializedJsonStatic extends Logging
   * loose with the types
   */
 @SerialVersionUID(713838456349L)
-class SerializedJson[A](inputDelegate: A) extends KryoSerializable with Serializable
-{
+class SerializedJson[A](inputDelegate: A) extends KryoSerializable with Serializable {
   @transient var delegate: A = Option(inputDelegate).getOrElse(throw new NullPointerException())
 
   @throws[IOException]
@@ -558,8 +553,7 @@ class SerializedJson[A](inputDelegate: A) extends KryoSerializable with Serializ
 }
 
 @SerialVersionUID(68710585891L)
-class SerializedHadoopConfig(delegate: Configuration) extends KryoSerializable with Serializable
-{
+class SerializedHadoopConfig(delegate: Configuration) extends KryoSerializable with Serializable {
   @transient var del = delegate
 
   @throws[IOException]
@@ -593,8 +587,7 @@ class SerializedHadoopConfig(delegate: Configuration) extends KryoSerializable w
   }
 }
 
-class DateBucketPartitioner(gran: Granularity, intervals: Iterable[Interval]) extends Partitioner
-{
+class DateBucketPartitioner(gran: Granularity, intervals: Iterable[Interval]) extends Partitioner {
   val intervalMap: Map[Long, Int] = intervals
     .map(_.getStart.getMillis)
     .foldLeft(Map[Long, Int]())((a, b) => a + (b -> a.size))
@@ -619,8 +612,7 @@ class DateBucketPartitioner(gran: Granularity, intervals: Iterable[Interval]) ex
 }
 
 class DateBucketAndHashPartitioner(gran: Granularity, partMap: Map[(Long, Long), Int])
-  extends Partitioner
-{
+  extends Partitioner {
   val maxTimePerBucket = partMap.groupBy(_._1._1).map(e => e._1 -> e._2.size)
 
   override def numPartitions: Int = partMap.size
