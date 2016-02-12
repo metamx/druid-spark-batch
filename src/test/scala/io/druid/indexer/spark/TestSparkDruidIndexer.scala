@@ -204,7 +204,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
       )
       val dataSchema = buildDataSchema(
         parseSpec = new
-            JSONParseSpec(new TimestampSpec("ts", null, null), new DimensionsSpec(null, ImmutableList.of("ts"), null)),
+            JSONParseSpec(new TimestampSpec("ts", null, null), new DimensionsSpec(ImmutableList.of("dim1"), ImmutableList.of("ts"), null), null, null),
         aggFactories = Seq()
       )
 
