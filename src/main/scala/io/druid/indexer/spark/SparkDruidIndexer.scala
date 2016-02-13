@@ -434,7 +434,7 @@ object SerializedJsonStatic {
     }
   }
   // I would use ObjectMapper.copy().configure(JsonParser.Feature.AUTO_CLOSE_SOURCE, false)
-  // But https://github.com/FasterXML/jackson-databind/issues/696 isn't until 4.5.1, and anything 4.5 or greater breaks
+  // But https://github.com/FasterXML/jackson-databind/issues/696 isn't until 2.5.1, and anything 2.5 or greater breaks
   // EVERYTHING
   // So instead we have to capture the close
   lazy val mapper: ObjectMapper = {
