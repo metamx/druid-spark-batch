@@ -44,11 +44,10 @@ import io.druid.query.aggregation.AggregatorFactory
 import io.druid.segment.IndexSpec
 import io.druid.segment.indexing.DataSchema
 import io.druid.timeline.DataSegment
-import io.tesla.aether.internal.DefaultTeslaAether
 import org.apache.spark.{SparkConf, SparkContext}
 import org.joda.time.Interval
 
-import scala.collection.JavaConversions._
+import scala.collection.JavaConverters._
 
 @JsonCreator
 class SparkBatchIndexTask(
@@ -69,7 +68,7 @@ class SparkBatchIndexTask(
   @JsonProperty("master")
   master: String = "local[1]",
   @JsonProperty("context")
-  context: util.Map[String, Object] = Map[String, Object](),
+  context: util.Map[String, Object] = Map[String, Object]().asJava,
   @JsonProperty("indexSpec")
   indexSpec: IndexSpec = new IndexSpec(),
   @JsonProperty("classpathPrefix")
@@ -89,7 +88,7 @@ class SparkBatchIndexTask(
   dataSchema.getDataSource,
   null,
   if (context == null) {
-    Map[String, String]()
+    Map[String, Object]().asJava
   }
   else {
     context
@@ -109,11 +108,11 @@ class SparkBatchIndexTask(
     } else {
       targetPartitionSize
     }
-  val aggregatorFactories_ : java.util.List[AggregatorFactory] =
+  val aggregatorFactories_ : util.List[AggregatorFactory] =
     if (dataSchema.getAggregators == null) {
-      List()
+      List[AggregatorFactory]().asJava
     } else {
-      dataSchema.getAggregators.toList
+      dataSchema.getAggregators.toList.asJava
     }
   val rowFlushBoundary_    : Int                               =
     if (rowFlushBoundary == 0) {
@@ -154,10 +153,10 @@ class SparkBatchIndexTask(
 
       val result = HadoopTask.invokeForeignLoader[util.ArrayList[String], util.ArrayList[String]](
         "io.druid.indexer.spark.Runner",
-        new util.ArrayList(List(task, Iterables.getOnlyElement(getTaskLocks(toolbox)).getVersion, outputPath)),
+        new util.ArrayList(List(task, Iterables.getOnlyElement(getTaskLocks(toolbox)).getVersion, outputPath).asJava),
         classLoader
-      )
-      toolbox.pushSegments(result.map(SerializedJsonStatic.mapper.readValue(_, classOf[DataSegment])))
+      ).asScala
+      toolbox.pushSegments(result.map(SerializedJsonStatic.mapper.readValue(_, classOf[DataSegment])).asJava)
       status = Option.apply(TaskStatus.success(getId))
     }
     catch {
@@ -246,7 +245,7 @@ object SparkBatchIndexTask
   val TASK_TYPE             = "index_spark"
 
   def mapToSegmentIntervals(originalIntervals: Iterable[Interval], granularity: Granularity): Iterable[Interval] = {
-    originalIntervals.map(x => iterableAsScalaIterable(granularity.getIterable(x))).reduce(_ ++ _)
+    originalIntervals.map(granularity.getIterable).map(_.asScala).reduce(_ ++ _)
   }
 
   // Properties which do not carry over to executors
@@ -330,7 +329,7 @@ object SparkBatchIndexTask
       }
     )
 
-    System.getProperties.stringPropertyNames().filter(
+    System.getProperties.stringPropertyNames().asScala.filter(
       x => {
         allowedPrefixes.exists(x.startsWith)
       }
@@ -340,7 +339,7 @@ object SparkBatchIndexTask
         propertiesToSet.setProperty(x, System.getProperty(x))
       }
     )
-    System.getProperties.stringPropertyNames().filter(_.startsWith(CHILD_PROPERTY_PREFIX)).foreach(
+    System.getProperties.stringPropertyNames().asScala.filter(_.startsWith(CHILD_PROPERTY_PREFIX)).foreach(
       x => {
         val y = x.substring(CHILD_PROPERTY_PREFIX.length)
         log.info("Setting child property [%s]", y)
@@ -350,13 +349,13 @@ object SparkBatchIndexTask
 
     log.info(
       "Adding task properties: [%s]",
-      task.getProperties.entrySet().map(x => Seq(x.getKey.toString, x.getValue.toString).mkString(":")).mkString(",")
+      task.getProperties.entrySet().asScala.map(x => Seq(x.getKey.toString, x.getValue.toString).mkString(":")).mkString(",")
     )
-    task.getProperties.foreach(x => propertiesToSet.setProperty(x._1, x._2))
+    task.getProperties.asScala.foreach(x => propertiesToSet.setProperty(x._1, x._2))
 
     forbiddenProperties.foreach(propertiesToSet.remove)
 
-    val sc = new SparkContext(conf.setAll(propertiesToSet))
+    val sc = new SparkContext(conf.setAll(propertiesToSet.asScala))
     closer.register(
       new Closeable
       {
@@ -369,7 +368,7 @@ object SparkBatchIndexTask
       val printWriter = propertyCloser.register(new PrintWriter(propertiesFile))
       // Make a file to propagate to all nodes which contains the properties
       try {
-        propertiesToSet.toSeq.foreach(x => printWriter.println(Seq(x._1, x._2).mkString("=")))
+        propertiesToSet.asScala.foreach(x => printWriter.println(Seq(x._1, x._2).mkString("=")))
       }
       catch {
         case t: Throwable => throw propertyCloser.rethrow(t)
@@ -380,7 +379,7 @@ object SparkBatchIndexTask
 
       sc.addJar(propertiesFile.toURI.toString)
 
-      System.getProperties.stringPropertyNames().filter(_.startsWith(CHILD_PROPERTY_PREFIX)).foreach(
+      System.getProperties.stringPropertyNames().asScala.filter(_.startsWith(CHILD_PROPERTY_PREFIX)).foreach(
         x => {
           val y = x.substring(CHILD_PROPERTY_PREFIX.length)
           log.debug("Setting child hadoop property [%s]", y)
@@ -424,10 +423,10 @@ object SparkBatchIndexTask
       log.debug("Using version [%s]", version)
 
       val dataSegments = SparkDruidIndexer.loadData(
-        task.getDataFiles,
+        task.getDataFiles.asScala,
         new SerializedJson[DataSchema](task.getDataSchema),
         SparkBatchIndexTask
-          .mapToSegmentIntervals(task.getIntervals, task.getDataSchema.getGranularitySpec.getSegmentGranularity),
+          .mapToSegmentIntervals(task.getIntervals.asScala, task.getDataSchema.getGranularitySpec.getSegmentGranularity),
         task.getTargetPartitionSize,
         task.getRowFlushBoundary,
         outputPath,
@@ -435,7 +434,7 @@ object SparkBatchIndexTask
         sc
       ).map(_.withVersion(version))
       log.info("Found segments `%s`", util.Arrays.deepToString(dataSegments.toArray))
-      new util.ArrayList(dataSegments.map(SerializedJsonStatic.mapper.writeValueAsString))
+      new util.ArrayList(dataSegments.map(SerializedJsonStatic.mapper.writeValueAsString).asJava)
     }
     catch {
       case t: Throwable => throw closer.rethrow(t)

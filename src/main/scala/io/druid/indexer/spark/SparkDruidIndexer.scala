@@ -32,7 +32,7 @@ import com.google.inject.{Binder, Injector, Key, Module}
 import com.metamx.common.logger.Logger
 import com.metamx.common.{Granularity, IAE, ISE}
 import io.druid.data.input.impl._
-import io.druid.data.input.{MapBasedInputRow, ProtoBufInputRowParser}
+import io.druid.data.input.{InputRow, MapBasedInputRow, ProtoBufInputRowParser}
 import io.druid.guice.annotations.{Json, Self}
 import io.druid.guice.{GuiceInjectors, JsonConfigProvider}
 import io.druid.indexer.{HadoopyStringInputRowParser, JobHelper}
@@ -51,11 +51,12 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapreduce.TaskAttemptID
 import org.apache.hadoop.util.Progressable
+import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.{Logging, Partitioner, SparkContext}
 import org.joda.time.{DateTime, Interval}
 
-import scala.collection.JavaConversions._
+import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 object SparkDruidIndexer extends Logging {
@@ -91,7 +92,7 @@ object SparkDruidIndexer extends Logging {
     logInfo(s"Splitting [$totalGZSize] gz bytes into [$startingPartitions] partitions")
 
     // Hadoopify the data so it doesn't look so silly in Spark's DAG
-    val baseData = sc.textFile(dataFiles mkString ",")
+    val baseData: RDD[(Long, Map[String, AnyRef])] = sc.textFile(dataFiles mkString ",")
       // Input data is probably in gigantic files, so redistribute
       .filter(
       s => {
@@ -117,7 +118,7 @@ object SparkDruidIndexer extends Logging {
       .persist(StorageLevel.DISK_ONLY)
       .mapPartitions(
         it => {
-          val i = dataSchema.getDelegate.getParser match {
+          val i: Iterator[InputRow] = dataSchema.getDelegate.getParser match {
             case x: StringInputRowParser => it.map(x.parse)
             case x: HadoopyStringInputRowParser => it.map(x.parse)
             case x: ProtoBufInputRowParser => throw new
@@ -139,18 +140,19 @@ object SparkDruidIndexer extends Logging {
                 // Example: AllGranularity
                 k = segmentGran.truncate(new DateTime(r.getTimestampFromEpoch)).getMillis
               }
-              k -> r.asInstanceOf[MapBasedInputRow].getEvent
+              k -> r.asInstanceOf[MapBasedInputRow].getEvent.asScala.toMap
             }
           )
         }
       )
 
     logInfo("Starting uniqes")
-    var uniquesEvents = baseData
-    if (dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec.hasCustomDimensions) {
+    val uniquesEvents = if (dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec.hasCustomDimensions) {
       val parseSpec = dataSchema.getDelegate.getParser.getParseSpec
-      val dims: Set[String] = (Set[String]() ++ parseSpec.getDimensionsSpec.getDimensions) -- parseSpec.getDimensionsSpec.getDimensionExclusions
-      uniquesEvents = baseData.mapValues(_.filterKeys(dims.contains))
+      val dims: Set[String] = parseSpec.getDimensionsSpec.getDimensions.asScala.toSet -- parseSpec.getDimensionsSpec.getDimensionExclusions.asScala
+      baseData.mapValues(_.filterKeys(dims.contains))
+    } else {
+      baseData
     }
 
     val partitionMap: Map[Long, Long] = uniquesEvents.countApproxDistinctByKey(
@@ -243,10 +245,10 @@ object SparkDruidIndexer extends Logging {
             val outPath = new Path(outPathString)
             val hadoopFs = outPath.getFileSystem(hadoopConf)
             val dimSpec = dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec
-            val excludedDims = dimSpec.getDimensionExclusions
-            val finalDims = if (dimSpec.hasCustomDimensions) dimSpec.getDimensions -- excludedDims else null
+            val excludedDims = dimSpec.getDimensionExclusions.asScala
+            val finalDims = (if (dimSpec.hasCustomDimensions) dimSpec.getDimensions.asScala -- excludedDims else List()).asJava
 
-            val indices: util.List[IndexableAdapter] = rows.grouped(rowsPerPersist)
+            val indices: Iterator[IndexableAdapter] = rows.grouped(rowsPerPersist)
               .map(
                 _.foldLeft(
                   new OnheapIncrementalIndex(
@@ -263,12 +265,13 @@ object SparkDruidIndexer extends Logging {
                   )
                 )(
                   (index: OnheapIncrementalIndex, r) => {
+                    val dims: util.List[String] = if (dimSpec.hasCustomDimensions) finalDims else (r._1._2.keySet -- excludedDims).toList.asJava
                     index.add(
                       index.formatRow(
                         new MapBasedInputRow(
                           r._1._1,
-                          if (dimSpec.hasCustomDimensions) finalDims else (r._1._2.keySet() -- excludedDims).toList,
-                          r._1._2
+                          dims,
+                          r._1._2.asJava
                         )
                       )
                     )
@@ -297,9 +300,9 @@ object SparkDruidIndexer extends Logging {
                 incIndex.close()
                 adapter
               }
-            ).toList
+            )
             val file = StaticIndex.INDEX_MERGER.merge(
-              indices,
+              indices.toList.asJava,
               aggs.map(_.getDelegate),
               tmpMergeDir,
               indexSpec_passable.getDelegate,
@@ -330,9 +333,10 @@ object SparkDruidIndexer extends Logging {
               }
             )
             val allDimensions: util.List[String] = indices
-              .map(_.getDimensionNames)
+              .map(_.getDimensionNames.asScala)
               .foldLeft(Set[String]())(_ ++ _)
               .toList
+              .asJava
             logInfo(s"Found dimensions [${util.Arrays.deepToString(allDimensions.toArray)}]")
             val dataSegmentTemplate = new DataSegment(
               dataSource,
@@ -340,7 +344,7 @@ object SparkDruidIndexer extends Logging {
               dataSegmentVersion,
               null,
               allDimensions,
-              aggs.map(_.getDelegate.getName).toList,
+              aggs.map(_.getDelegate.getName).toList.asJava,
               if (partitionCount == 1) {
                 new NoneShardSpec()
               } else {
@@ -424,7 +428,7 @@ object SerializedJsonStatic {
                 )
             }
           }
-        )
+        ).asJava
       )
     }
     catch {
@@ -486,19 +490,17 @@ class SerializedJson[A](inputDelegate: A) extends KryoSerializable with Serializ
   def innerWrite(output: OutputStream): Unit = SerializedJsonStatic.mapper
     .writeValue(SerializedJsonStatic.captureCloseOutputStream(output), toJavaMap)
 
-  def toJavaMap = mapAsJavaMap(
-    Map(
+  def toJavaMap = Map(
       "class" -> delegate.getClass.getCanonicalName,
       "delegate" -> SerializedJsonStatic.mapper.writeValueAsString(delegate)
-    )
-  )
+    ).asJava
 
   def getMap(input: InputStream) = SerializedJsonStatic
     .mapper
     .readValue(
       SerializedJsonStatic.captureCloseInputStream(input),
       SerializedJsonStatic.mapTypeReference
-    ).asInstanceOf[java.util.Map[String, Object]].toMap[String, Object]
+    ).asInstanceOf[java.util.Map[String, Object]].asScala.toMap[String, Object]
 
 
   @throws[IOException]
