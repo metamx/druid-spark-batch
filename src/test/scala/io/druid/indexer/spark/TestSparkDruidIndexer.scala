@@ -318,7 +318,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers {
     val partitioner = new DateBucketAndHashPartitioner(Granularity.YEAR, m)
     partitioner.getPartition(makeEvent(intervals.head.getStart)) should equal(0)
     partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L))) should equal(1)
-    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "something else")) should equal(2)
+    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "something else1")) should equal(2)
     partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "anotherHash3")) should equal(2)
     partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "anotherHash1")) should equal(1)
   }
@@ -330,7 +330,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers {
     val partitioner = new DateBucketAndHashPartitioner(Granularity.YEAR, m, Option(Set("dim1")))
     partitioner.getPartition(makeEvent(intervals.head.getStart)) should equal(0)
     partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L))) should equal(1)
-    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "something else")) should equal(2)
+    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "something else1")) should equal(2)
     partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "anotherHash3")) should equal(2)
     partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "anotherHash1")) should equal(1)
   }
@@ -342,7 +342,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers {
     val partitioner = new DateBucketAndHashPartitioner(Granularity.YEAR, m, Option(Set[String]()))
     partitioner.getPartition(makeEvent(intervals.head.getStart)) should equal(0)
     partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L))) should equal(1)
-    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "something else")) should equal(1)
+    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "something else1")) should equal(1)
     partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "anotherHash3")) should equal(1)
     partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "anotherHash1")) should equal(1)
   }

@@ -43,12 +43,13 @@ import io.druid.segment.indexing.DataSchema
 import io.druid.segment.loading.DataSegmentPusher
 import io.druid.server.DruidNode
 import io.druid.timeline.DataSegment
-import io.druid.timeline.partition.{NoneShardSpec, NumberedShardSpec}
+import io.druid.timeline.partition.{HashBasedNumberedShardSpec, NoneShardSpec, ShardSpec}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapreduce.TaskAttemptID
 import org.apache.hadoop.util.Progressable
+import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.{Logging, Partitioner, SparkContext}
 import org.joda.time.{DateTime, Interval}
@@ -59,16 +60,15 @@ import scala.util.control.NonFatal
 
 object SparkDruidIndexer extends Logging {
   def loadData(
-    dataFiles: Seq[String],
-    dataSchema: SerializedJson[DataSchema],
-    ingestIntervals: Iterable[Interval],
-    rowsPerPartition: Long,
-    rowsPerPersist: Int,
-    outPathString: String,
-    indexSpec: IndexSpec,
-    sc: SparkContext
-  ): Seq[DataSegment] =
-  {
+                dataFiles: Seq[String],
+                dataSchema: SerializedJson[DataSchema],
+                ingestIntervals: Iterable[Interval],
+                rowsPerPartition: Long,
+                rowsPerPersist: Int,
+                outPathString: String,
+                indexSpec: IndexSpec,
+                sc: SparkContext
+              ): Seq[DataSegment] = {
     val dataSource = dataSchema.getDelegate.getDataSource
     logInfo(s"Launching Spark task with jar version [${getClass.getPackage.getImplementationVersion}]")
     val dataSegmentVersion = DateTime.now().toString
@@ -101,8 +101,8 @@ object SparkDruidIndexer extends Logging {
               UnsupportedOperationException("Cannot use Protobuf for text input")
           case x =>
             logTrace(
-              s"Could not figure out how to handle class " +
-                "[${x.getClass.getCanonicalName}]. " +
+              "Could not figure out how to handle class " +
+                s"[${x.getClass.getCanonicalName}]. " +
                 "Hoping it can handle string input"
             )
             x.asInstanceOf[InputRowParser[Any]].parse(s)
@@ -145,17 +145,16 @@ object SparkDruidIndexer extends Logging {
       )
 
     logInfo("Starting uniqes")
-    val optionalDims : Option[Set[String]] = if( dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec.hasCustomDimensions) {
+    val optionalDims: Option[Set[String]] = if (dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec.hasCustomDimensions) {
       val parseSpec = dataSchema.getDelegate.getParser.getParseSpec
-      Option((Set[String]() ++ parseSpec.getDimensionsSpec.getDimensions) -- parseSpec.getDimensionsSpec.getDimensionExclusions)
+      Some(parseSpec.getDimensionsSpec.getDimensions.asScala.toSet)
     } else {
       None
     }
 
-    var uniquesEvents = baseData
-    if (optionalDims.isDefined) {
-      val dims = optionalDims.get
-      uniquesEvents = baseData.mapValues(_.filterKeys(dims.contains))
+    val uniquesEvents: RDD[(Long, util.Map[String, AnyRef])] = optionalDims match {
+      case Some(dims) =>baseData.mapValues(_.filterKeys(dims.contains))
+      case None => baseData
     }
 
     val partitionMap: Map[Long, Long] = uniquesEvents.countApproxDistinctByKey(
@@ -182,7 +181,7 @@ object SparkDruidIndexer extends Logging {
       (a: ((Long, Long), Int)) => {
         logInfo(
           s"Date Bucket [${a._1._1}] with partition number [${a._1._2}]" +
-            " has total partition number [${ a._2}]"
+            s" has total partition number [${ a._2}]"
         )
       }
     }
@@ -195,7 +194,8 @@ object SparkDruidIndexer extends Logging {
         new DateBucketAndHashPartitioner(
           dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity,
           hashToPartitionMap,
-          optionalDims
+          optionalDims,
+          Some(dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec.getDimensionExclusions.asScala.toSet)
         )
       )
       .mapPartitionsWithIndex(
@@ -204,9 +204,8 @@ object SparkDruidIndexer extends Logging {
           val partitionNums = hashToPartitionMap.filter(_._2 == index).map(_._1._2.toInt).toSeq
           if (partitionNums.isEmpty) {
             throw new ISE(
-              "%s",
               s"Partition [$index] not found in partition map. " +
-                "Valid parts: ${hashToPartitionMap.values}"
+                s"Valid parts: ${hashToPartitionMap.values}"
             )
           }
           if (partitionNums.length != 1) {
@@ -250,7 +249,7 @@ object SparkDruidIndexer extends Logging {
             val hadoopFs = outPath.getFileSystem(hadoopConf)
             val dimSpec = dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec
             val excludedDims = dimSpec.getDimensionExclusions
-            val finalDims = if (dimSpec.hasCustomDimensions) dimSpec.getDimensions -- excludedDims else null
+            val finalDims: Option[util.List[String]] = if (dimSpec.hasCustomDimensions) Some(dimSpec.getDimensions) else None
 
             val indices: util.List[IndexableAdapter] = rows.grouped(rowsPerPersist)
               .map(
@@ -273,7 +272,7 @@ object SparkDruidIndexer extends Logging {
                       index.formatRow(
                         new MapBasedInputRow(
                           r._1._1,
-                          if (dimSpec.hasCustomDimensions) finalDims else (r._1._2.keySet() -- excludedDims).toList,
+                          finalDims.getOrElse((r._1._2.keySet() -- excludedDims).toList.asJava),
                           r._1._2
                         )
                       )
@@ -353,7 +352,7 @@ object SparkDruidIndexer extends Logging {
                 if (partitionCount == 1) {
                   new NoneShardSpec()
                 } else {
-                  new NumberedShardSpec(partitionNum, partitionCount)
+                  new HashBasedNumberedShardSpec(partitionNum, partitionCount, SerializedJsonStatic.mapper)
                 },
                 -1,
                 -1
@@ -619,17 +618,26 @@ class DateBucketPartitioner(gran: Granularity, intervals: Iterable[Interval]) ex
   }
 }
 
-class DateBucketAndHashPartitioner(gran: Granularity, partMap: Map[(Long, Long), Int], optionalDims : Option[Set[String]] = None)
+class DateBucketAndHashPartitioner(gran: Granularity,
+                                   partMap: Map[(Long, Long), Int],
+                                   optionalDims: Option[Set[String]] = None,
+                                   optionalDimExclusions: Option[Set[String]] = None
+                                  )
   extends Partitioner {
-  val maxTimePerBucket = partMap.groupBy(_._1._1).map(e => e._1 -> e._2.size)
-  val dims = optionalDims.orNull
-
+  lazy val shardLookups = partMap.groupBy { case ((bucket, _), _) => bucket }
+    .map { case (bucket, indices) => bucket -> indices.size }
+    .mapValues(maxPartitions => {
+      val shardSpecs = (0 until maxPartitions)
+        .map(new HashBasedNumberedShardSpec(_, maxPartitions, SerializedJsonStatic.mapper).asInstanceOf[ShardSpec])
+      shardSpecs.head.getLookup(shardSpecs.asJava)
+    })
+  lazy val excludedDimensions = optionalDimExclusions.getOrElse(Set())
 
   override def numPartitions: Int = partMap.size
 
   override def getPartition(key: Any): Int = key match {
     case (k: Long, v: AnyRef) =>
-      val map : Map[String, AnyRef] = v match {
+      val eventMap: Map[String, AnyRef] = v match {
         case mm: util.Map[String, AnyRef] =>
           mm.asScala.toMap
         case mm: Map[String, AnyRef] =>
@@ -638,26 +646,25 @@ class DateBucketAndHashPartitioner(gran: Granularity, partMap: Map[(Long, Long),
           throw new IAE(s"Unknown value type ${x.getClass} : [$x]")
       }
       val dateBucket = gran.truncate(new DateTime(k)).getMillis
-      val modSize = maxTimePerBucket.get(dateBucket.toLong)
-      if (modSize.isEmpty) {
-        // Lazy ISE creation
-        throw new ISE(s"bad date bucket [${dateBucket.toLong}]. " +
-          s"available: ${maxTimePerBucket.keySet}")
+      val shardLookup = shardLookups.get(dateBucket) match {
+        case Some(sl) => sl
+        case None => throw new IAE(s"Bad date bucket $dateBucket")
       }
-      val m = modSize.get
-      if (m <= 0) {
-        throw new ISE(s"Illegal mod [$m]")
+
+      val shardSpec = shardLookup.getShardSpec(
+        dateBucket,
+        new MapBasedInputRow(
+          dateBucket,
+          optionalDims.getOrElse(eventMap.keySet -- excludedDimensions).toList.asJava, eventMap
+        )
+      )
+      val timePartNum = shardSpec.getPartitionNum
+
+      partMap.get((dateBucket.toLong, timePartNum)) match {
+        case Some(part) => part
+        case None => throw new ISE(s"bad date and partition combo: ($dateBucket, $timePartNum)")
       }
-      val hash = if(dims != null) {
-        Math.abs(map.filterKeys(dims.contains).hashCode().toLong) % m.toLong
-      } else {
-        Math.abs(map.hashCode().toLong) % m.toLong
-      }
-      val partOpt = partMap.get((dateBucket.toLong, hash.toLong))
-      if (partOpt.isEmpty) {
-        throw new ISE(s"bad hash and bucket combo: ($dateBucket, $hash)")
-      }
-      partOpt.get
     case x => throw new IAE(s"Unknown type ${x.getClass} : [$x]")
   }
 }
+
