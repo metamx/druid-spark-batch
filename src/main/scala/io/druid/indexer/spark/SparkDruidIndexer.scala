@@ -54,6 +54,7 @@ import org.apache.spark.{Logging, Partitioner, SparkContext}
 import org.joda.time.{DateTime, Interval}
 
 import scala.collection.JavaConversions._
+import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 object SparkDruidIndexer extends Logging {
@@ -144,10 +145,16 @@ object SparkDruidIndexer extends Logging {
       )
 
     logInfo("Starting uniqes")
-    var uniquesEvents = baseData
-    if (dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec.hasCustomDimensions) {
+    val optionalDims : Option[Set[String]] = if( dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec.hasCustomDimensions) {
       val parseSpec = dataSchema.getDelegate.getParser.getParseSpec
-      val dims: Set[String] = (Set[String]() ++ parseSpec.getDimensionsSpec.getDimensions) -- parseSpec.getDimensionsSpec.getDimensionExclusions
+      Option((Set[String]() ++ parseSpec.getDimensionsSpec.getDimensions) -- parseSpec.getDimensionsSpec.getDimensionExclusions)
+    } else {
+      None
+    }
+
+    var uniquesEvents = baseData
+    if (optionalDims.isDefined) {
+      val dims = optionalDims.get
       uniquesEvents = baseData.mapValues(_.filterKeys(dims.contains))
     }
 
@@ -187,7 +194,8 @@ object SparkDruidIndexer extends Logging {
       .partitionBy(
         new DateBucketAndHashPartitioner(
           dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity,
-          hashToPartitionMap
+          hashToPartitionMap,
+          optionalDims
         )
       )
       .mapPartitionsWithIndex(
@@ -611,31 +619,45 @@ class DateBucketPartitioner(gran: Granularity, intervals: Iterable[Interval]) ex
   }
 }
 
-class DateBucketAndHashPartitioner(gran: Granularity, partMap: Map[(Long, Long), Int])
+class DateBucketAndHashPartitioner(gran: Granularity, partMap: Map[(Long, Long), Int], optionalDims : Option[Set[String]] = None)
   extends Partitioner {
   val maxTimePerBucket = partMap.groupBy(_._1._1).map(e => e._1 -> e._2.size)
+  val dims = optionalDims.orNull
+
 
   override def numPartitions: Int = partMap.size
 
   override def getPartition(key: Any): Int = key match {
     case (k: Long, v: AnyRef) =>
+      val map : Map[String, AnyRef] = v match {
+        case mm: util.Map[String, AnyRef] =>
+          mm.asScala.toMap
+        case mm: Map[String, AnyRef] =>
+          mm
+        case x =>
+          throw new IAE(s"Unknown value type ${x.getClass} : [$x]")
+      }
       val dateBucket = gran.truncate(new DateTime(k)).getMillis
       val modSize = maxTimePerBucket.get(dateBucket.toLong)
       if (modSize.isEmpty) {
         // Lazy ISE creation
         throw new ISE(s"bad date bucket [${dateBucket.toLong}]. " +
-          "available: ${maxTimePerBucket.keySet}")
+          s"available: ${maxTimePerBucket.keySet}")
       }
       val m = modSize.get
       if (m <= 0) {
         throw new ISE(s"Illegal mod [$m]")
       }
-      val hash = Math.abs(v.hashCode().toLong) % m.toLong
+      val hash = if(dims != null) {
+        Math.abs(map.filterKeys(dims.contains).hashCode().toLong) % m.toLong
+      } else {
+        Math.abs(map.hashCode().toLong) % m.toLong
+      }
       val partOpt = partMap.get((dateBucket.toLong, hash.toLong))
       if (partOpt.isEmpty) {
         throw new ISE(s"bad hash and bucket combo: ($dateBucket, $hash)")
       }
       partOpt.get
-    case x => throw new IAE(s"Unknown type [$x]")
+    case x => throw new IAE(s"Unknown type ${x.getClass} : [$x]")
   }
 }
