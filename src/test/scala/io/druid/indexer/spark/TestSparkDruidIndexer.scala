@@ -21,6 +21,7 @@ package io.druid.indexer.spark
 
 import java.io.{Closeable, File}
 import java.nio.file.Files
+import java.util
 
 import com.google.common.collect.ImmutableList
 import com.google.common.io.Closer
@@ -29,7 +30,7 @@ import com.metamx.common.{CompressionUtils, Granularity, IAE}
 import io.druid.common.utils.JodaUtils
 import io.druid.data.input.impl.{DimensionsSpec, JSONParseSpec, TimestampSpec}
 import io.druid.query.aggregation.LongSumAggregatorFactory
-import io.druid.segment._
+import io.druid.segment.QueryableIndexIndexableAdapter
 import org.apache.commons.io.FileUtils
 import org.apache.spark.{SparkConf, SparkContext}
 import org.joda.time.{DateTime, Interval}
@@ -38,8 +39,7 @@ import org.scalatest._
 import scala.collection.JavaConverters._
 
 
-class TestSparkDruidIndexer extends FlatSpec with Matchers
-{
+class TestSparkDruidIndexer extends FlatSpec with Matchers {
 
   import TestScalaBatchIndexTask._
 
@@ -52,8 +52,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
     val outDir = Files.createTempDirectory("segments").toFile
     (outDir.mkdirs() || outDir.exists()) && outDir.isDirectory should be(true)
     closer.register(
-      new Closeable()
-      {
+      new Closeable() {
         override def close(): Unit = FileUtils.deleteDirectory(outDir)
       }
     )
@@ -74,8 +73,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
 
       val sc = new SparkContext(conf)
       closer.register(
-        new Closeable
-        {
+        new Closeable {
           override def close(): Unit = sc.stop()
         }
       )
@@ -176,8 +174,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
     val outDir = Files.createTempDirectory("segments").toFile
     (outDir.mkdirs() || outDir.exists()) && outDir.isDirectory should be(true)
     closer.register(
-      new Closeable()
-      {
+      new Closeable() {
         override def close(): Unit = FileUtils.deleteDirectory(outDir)
       }
     )
@@ -198,8 +195,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
 
       val sc = new SparkContext(conf)
       closer.register(
-        new Closeable
-        {
+        new Closeable {
           override def close(): Unit = sc.stop()
         }
       )
@@ -330,11 +326,35 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
     partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L))) should equal(1)
     partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "something else")) should equal(2)
     partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "anotherHash3")) should equal(2)
-    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "anotherHash")) should equal(1)
+    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "anotherHash1")) should equal(1)
   }
 
-  def makeEvent(d: DateTime, v: String = "dim11"): (Long, Seq[(String, List[String])]) = {
-    (d.getMillis, List(("dim1", List(v))))
+  "The DateBucketAndHashPartitioner workflow" should "properly partition multiple date ranges and buckets when dim is specified" in {
+    val intervals = SparkBatchIndexTask.mapToSegmentIntervals(Seq(Interval.parse("1992/1994")), Granularity.YEAR)
+    val map = Map(new DateTime("1992").getMillis -> 100L, new DateTime("1993").getMillis -> 200L)
+    val m = SparkDruidIndexer.getSizedPartitionMap(map, 150)
+    val partitioner = new DateBucketAndHashPartitioner(Granularity.YEAR, m, Option(Set("dim1")))
+    partitioner.getPartition(makeEvent(intervals.head.getStart)) should equal(0)
+    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L))) should equal(1)
+    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "something else")) should equal(2)
+    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "anotherHash3")) should equal(2)
+    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "anotherHash1")) should equal(1)
+  }
+
+  "The DateBucketAndHashPartitioner workflow" should "properly group multiple events together" in {
+    val intervals = SparkBatchIndexTask.mapToSegmentIntervals(Seq(Interval.parse("1992/1994")), Granularity.YEAR)
+    val map = Map(new DateTime("1992").getMillis -> 100L, new DateTime("1993").getMillis -> 200L)
+    val m = SparkDruidIndexer.getSizedPartitionMap(map, 150)
+    val partitioner = new DateBucketAndHashPartitioner(Granularity.YEAR, m, Option(Set[String]()))
+    partitioner.getPartition(makeEvent(intervals.head.getStart)) should equal(0)
+    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L))) should equal(1)
+    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "something else")) should equal(1)
+    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "anotherHash3")) should equal(1)
+    partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "anotherHash1")) should equal(1)
+  }
+
+  def makeEvent(d: DateTime, v: String = "dim11"): (Long, Map[String, List[String]]) = {
+    d.getMillis -> Map("dim1" -> List(v))
   }
 
   "getSizedPartitionMap" should "partition data correctly for single items" in {
@@ -384,16 +404,15 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
     val partitioner = new
         DateBucketAndHashPartitioner(Granularity.YEAR, Map[(Long, Long), Int]((0L, 0L) -> 1, (0L, 0L) -> 2))
     partitioner.getPartition(
-      (100000L, new Object() {
+      100000L -> new util.HashMap[String, AnyRef]() {
         override def hashCode(): Int = {
           Integer.MIN_VALUE
         }
-      })
+      }
     ) should be(2)
   }
 }
 
-object StaticTestSparkDruidIndexer
-{
+object StaticTestSparkDruidIndexer {
   val log = new Logger(classOf[TestSparkDruidIndexer])
 }
