@@ -104,7 +104,7 @@ object SparkDruidIndexer extends Logging {
           case x =>
             logTrace(
               s"Could not figure out how to handle class " +
-                "[${x.getClass.getCanonicalName}]. " +
+                s"[${x.getClass.getCanonicalName}]. " +
                 "Hoping it can handle string input"
             )
             x.asInstanceOf[InputRowParser[Any]].parse(s)
@@ -166,12 +166,12 @@ object SparkDruidIndexer extends Logging {
         dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity,
         passableIntervals
       )
-    ).map(
-      x => dataSchema.getDelegate.getGranularitySpec
+    ).map {
+      case (dateBucket, dateCount) => dataSchema.getDelegate.getGranularitySpec
         .getSegmentGranularity
-        .truncate(new DateTime(x._1))
-        .getMillis -> x._2
-    ).reduceByKey(_ + _).collect().toMap
+        .truncate(new DateTime(dateBucket))
+        .getMillis -> dateCount
+    }.reduceByKey(_ + _).collect().toMap
 
     // Map key tuple is DateBucket, PartitionInBucket with map value of Partition #
     val hashToPartitionMap: Map[(Long, Long), Int] = getSizedPartitionMap(
@@ -181,12 +181,10 @@ object SparkDruidIndexer extends Logging {
 
     // Get dimension values and dims per timestamp
     hashToPartitionMap.foreach {
-      (a: ((Long, Long), Int)) => {
-        logInfo(
-          s"Date Bucket [${a._1._1}] with partition number [${a._1._2}]" +
-            " has total partition number [${ a._2}]"
-        )
-      }
+      case ((dateBucket: Long, datePartition: Long), partNum: Int) => logInfo(
+        s"Date Bucket $dateBucket with partition number $datePartition" +
+          s" has total partition number $partNum"
+      )
     }
 
     val indexSpec_passable = new SerializedJson[IndexSpec](indexSpec)
@@ -202,8 +200,10 @@ object SparkDruidIndexer extends Logging {
       )
       .mapPartitionsWithIndex(
         (index, it) => {
-
-          val partitionNums = hashToPartitionMap.filter(_._2 == index).map(_._1._2.toInt).toSeq
+          val partitionNums = hashToPartitionMap
+            .filter { case (_, partNum) => partNum == index }
+            .map { case ((_, datePartition), _) => datePartition.toInt }
+            .toSeq
           if (partitionNums.isEmpty) {
             throw new ISE(
               "%s",
@@ -251,8 +251,8 @@ object SparkDruidIndexer extends Logging {
             val outPath = new Path(outPathString)
             val hadoopFs = outPath.getFileSystem(hadoopConf)
             val dimSpec = dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec
-            val excludedDims = dimSpec.getDimensionExclusions
-            val finalDims = if (dimSpec.hasCustomDimensions) dimSpec.getDimensions -- excludedDims else null
+            val excludedDims = dimSpec.getDimensionExclusions.asScala.toSet
+            val finalDims : Option[List[String]] = if (dimSpec.hasCustomDimensions) Option((dimSpec.getDimensions.asScala -- excludedDims).toList) else None
 
             val indices: util.List[IndexableAdapter] = rows.grouped(rowsPerPersist)
               .map(
@@ -275,7 +275,7 @@ object SparkDruidIndexer extends Logging {
                       index.formatRow(
                         new MapBasedInputRow(
                           r._1._1,
-                          if (dimSpec.hasCustomDimensions) finalDims else (r._1._2.keySet() -- excludedDims).toList,
+                          finalDims.getOrElse(r._1._2.keySet() -- excludedDims).toList.asJava,
                           r._1._2
                         )
                       )
@@ -400,16 +400,12 @@ object SparkDruidIndexer extends Logging {
     *         or equal to the number of events (sum of keys of inMap)
     */
   def getSizedPartitionMap(inMap: Map[Long, Long], rowsPerPartition: Long): Map[(Long, Long), Int] = inMap
-    .filter(_._2 > 0)
-    .map(
-      (x) => {
-        val dateRangeBucket = x._1
-        val numEventsInRange = x._2
-        Range
-          .apply(0, (numEventsInRange / rowsPerPartition + 1).toInt)
+    .filter { case (_, numEventsInRange) => numEventsInRange > 0 }
+    .map {
+      case (dateRangeBucket, numEventsInRange) =>
+        Range(0, (numEventsInRange / rowsPerPartition + 1).toInt)
           .map(a => (dateRangeBucket, a.toLong))
-      }
-    )
+    }
     .foldLeft(Seq[(Long, Long)]())(_ ++ _)
     .foldLeft(Map[(Long, Long), Int]())(
       (b: Map[(Long, Long), Int], v: (Long, Long)) => b + (v -> b.size)
