@@ -159,7 +159,7 @@ The json keys accepted by the spark batch indexer are described below
 |`paths`              |List of strings |Yes               |N/A              |A list of hadoop-readable input files. The values are joined with a `,` and used as a `SparkContext.textFile`|
 |`dataSchema`         |DataSchema      |Yes               |N/A              |The data schema to use|
 |`intervals`          |List of strings |Yes               |N/A              |A list of ISO intervals to be indexed. ALL data for these intervals MUST be present in `paths`|
-|`maxRowsInMemory`    |positive integer|No                |`80000`          |Maximum number of rows to store in memory before an intermediate flush to disk|
+|`maxRowsInMemory`    |positive integer|No                |`75000`          |Maximum number of rows to store in memory before an intermediate flush to disk|
 |`targetPartitionSize`|positive integer|No                |`5000000`        |The target number of rows per partition per segment granularity|
 |`master`             |String          |No                |`master[1]`      |The spark master URI|
 |`properties`         |Map             |No                |none             | A map of string key/value pairs to inject into the SparkContext properties overriding any prior set values|
