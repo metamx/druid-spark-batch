@@ -265,8 +265,9 @@ object SparkDruidIndexer extends Logging {
                       )
                       .withMetrics(aggs.map(_.getDelegate))
                       .withMinTimestamp(timeBucket)
-                      .build()
-                    , rowsPerPersist
+                      .build(),
+                    true, // Throws exception on parse error
+                    rowsPerPersist
                   )
                 )(
                   (index: OnheapIncrementalIndex, r) => {
