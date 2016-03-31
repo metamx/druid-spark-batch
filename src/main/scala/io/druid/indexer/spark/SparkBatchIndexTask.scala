@@ -239,7 +239,7 @@ class SparkBatchIndexTask(
 
 object SparkBatchIndexTask
 {
-  private val DEFAULT_ROW_FLUSH_BOUNDARY   : Int    = 80000
+  private val DEFAULT_ROW_FLUSH_BOUNDARY   : Int    = 75000
   private val DEFAULT_TARGET_PARTITION_SIZE: Long   = 5000000L
   private val CHILD_PROPERTY_PREFIX        : String = "druid.indexer.fork.property."
   val log                   = new Logger(SparkBatchIndexTask.getClass)
