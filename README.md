@@ -3,7 +3,7 @@ Druid indexing plugin for using Spark in batch jobs
 
 This repository holds a Druid extension for using Spark as the engine for running batch jobs
 
-To build issue the commnand `JAVA_HOME=$(/usr/libexec/java_home -v 1.7) sbt clean test publish-local publish-m2`
+To build issue the commnand `sbt clean test publish-local publish-m2`
 
 ## Default Properties
 The default properties injected into spark are as follows:
@@ -17,8 +17,6 @@ The default properties injected into spark are as follows:
     .set("org.jboss.logging.provider", "slf4j")
 ```
 
-To use this extension, the hadoop client libraries and spark assembly (which might include the hadoop libraries) should be on the classpath of the overlord or middle manager. And the following should be added to `druid.extensions.coordinates`  : `io.druid.extensions:druid-spark-batch_2.10:jar:assembly:0.0.13` (obviously with the corrected version for whichever version you are using)
-
 ## How to use
 
 There are four key things that need configured to use this extension
@@ -26,9 +24,9 @@ There are four key things that need configured to use this extension
 1. Overlord needs the `druid-spark-batch` extension added.
 2. MiddleManager (if present) needs the `druid-spark-batch` extension added.
 3. A task json needs configured.
-4. Spark is included in the default hadoop coordinates similar to `druid.indexer.task.defaultHadoopCoordinates=["org.apache.spark:spark-core_2.10:1.5.2-mmx0"]`
+4. Spark is included in the default hadoop coordinates similar to `druid.indexer.task.defaultHadoopCoordinates=["org.apache.spark:spark-core_2.10:1.5.2-mmx1"]`
 
-To load the extension, use the appropriate coordinates (for druid 0.8.x ) or make certain the extension jars are located in the proper directories (druid 0.9.x and later)
+To load the extension, use the appropriate coordinates (for druid 0.8.x the following should be added to `druid.extensions.coordinates`  : `io.druid.extensions:druid-spark-batch_2.10:jar:assembly:0.0.13`) or make certain the extension jars are located in the proper directories (druid 0.9.x and later with version 0.9.0.x of this library)
 
 ## Task JSON
 The following is an example spark batch task for the indexing service:

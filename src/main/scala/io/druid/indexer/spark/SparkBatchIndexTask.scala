@@ -20,7 +20,6 @@
 package io.druid.indexer.spark
 
 import java.io.{Closeable, File, IOException, PrintWriter}
-import java.net.{URL, URLClassLoader}
 import java.nio.file.Files
 import java.util
 import java.util.{Objects, Properties}
@@ -29,22 +28,18 @@ import com.fasterxml.jackson.annotation.{JsonCreator, JsonProperty}
 import com.google.common.base.{Preconditions, Strings}
 import com.google.common.collect.Iterables
 import com.google.common.io.Closer
-import com.google.inject.Injector
 import com.metamx.common.Granularity
 import com.metamx.common.logger.Logger
 import io.druid.common.utils.JodaUtils
 import io.druid.data.input.impl.ParseSpec
 import io.druid.granularity.QueryGranularity
-import io.druid.guice.{ExtensionsConfig, GuiceInjectors}
 import io.druid.indexing.common.actions.{LockTryAcquireAction, TaskActionClient}
 import io.druid.indexing.common.task.{AbstractTask, HadoopTask}
 import io.druid.indexing.common.{TaskStatus, TaskToolbox}
-import io.druid.initialization.Initialization
 import io.druid.query.aggregation.AggregatorFactory
 import io.druid.segment.IndexSpec
 import io.druid.segment.indexing.DataSchema
 import io.druid.timeline.DataSegment
-import io.tesla.aether.internal.DefaultTeslaAether
 import org.apache.spark.{SparkConf, SparkContext}
 import org.joda.time.Interval
 
@@ -242,20 +237,23 @@ object SparkBatchIndexTask
   private val DEFAULT_ROW_FLUSH_BOUNDARY   : Int    = 80000
   private val DEFAULT_TARGET_PARTITION_SIZE: Long   = 5000000L
   private val CHILD_PROPERTY_PREFIX        : String = "druid.indexer.fork.property."
-  val log                   = new Logger(SparkBatchIndexTask.getClass)
-  val TASK_TYPE             = "index_spark"
+  val log       = new Logger(SparkBatchIndexTask.getClass)
+  val TASK_TYPE = "index_spark"
 
   def mapToSegmentIntervals(originalIntervals: Iterable[Interval], granularity: Granularity): Iterable[Interval] = {
     originalIntervals.map(x => iterableAsScalaIterable(granularity.getIterable(x))).reduce(_ ++ _)
   }
 
   // Properties which do not carry over to executors
-  private [SparkBatchIndexTask] val forbiddenProperties = Seq("druid.extensions.coordinates", "druid.extensions.loadList")
+  private[SparkBatchIndexTask] val forbiddenProperties = Seq(
+    "druid.extensions.coordinates",
+    "druid.extensions.loadList"
+  )
 
   // See io.druid.indexing.overlord.config.ForkingTaskRunnerConfig.allowedPrefixes
   // We don't include tmp.dir
   // user.timezone and file.encoding are set above
-  private [SparkBatchIndexTask] val allowedPrefixes = Seq(
+  private[SparkBatchIndexTask] val allowedPrefixes = Seq(
     "com.metamx",
     "druid",
     "io.druid",
@@ -388,34 +386,23 @@ object SparkBatchIndexTask
         }
       )
 
-      val injector: Injector = GuiceInjectors.makeStartupInjector
-      val extensionsConfig: ExtensionsConfig = injector.getInstance(classOf[ExtensionsConfig])
-
-      val extensionJars = Initialization.getExtensionFilesToLoad(extensionsConfig)
-
-      var classpathProperty: String = System.getProperty("druid.hadoop.internal.classpath")
-      if (classpathProperty == null) {
-        classpathProperty = System.getProperty("java.class.path")
-      }
-
-      classpathProperty.split(File.pathSeparator).filter(_.endsWith(".jar")).foreach(
+      // Should be set by HadoopTask for job jars
+      // Hadoop tasks use io.druid.indexer.JobHelper::setupClasspath to replicate their jars.
+      // The jars are put in some universally accessable location and each job addresses them.
+      // Spark has internal mechanisms for shipping its jars around, making an external blob storage (like HDFS or S3)
+      // not required for jar distribution.
+      // In general they both "make list of jars... distribute via XXX... make that list available on all the workers"
+      // but how they accomplish the XXX part is different.
+      // So this **can't** use io.druid.indexer.JobHelper::setupClasspath, and has to have its own way of parsing here.
+      val hadoopTaskJars = System.getProperties.toMap
+        .getOrElse(
+          "druid.hadoop.internal.classpath",
+          throw new IllegalStateException("missing druid.hadoop.internal.classpath from HadoopTask")
+        )
+      hadoopTaskJars.split(File.pathSeparator).filter(_.endsWith(".jar")).foreach(
         x => {
-          log.info("Adding path jar [%s]", x)
+          log.info(s"Adding jar [$x]")
           sc.addJar(x)
-        }
-      )
-
-      SparkContext.jarOfClass(classOf[SparkBatchIndexTask]).filter(_.endsWith(".jar")).foreach(
-        x => {
-          log.info("Adding class jar [%s]", x)
-          sc.addJar(x)
-        }
-      )
-
-      extensionJars.filter(_.getName.endsWith(".jar")).foreach(
-        x => {
-          log.info("Adding extension jar [%s]", x)
-          sc.addJar(x.getAbsolutePath)
         }
       )
 
