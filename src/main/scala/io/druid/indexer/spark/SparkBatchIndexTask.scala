@@ -149,7 +149,7 @@ class SparkBatchIndexTask(
     try {
       val outputPath = toolbox.getSegmentPusher.getPathForHadoop(getDataSource)
       val classLoader = buildClassLoader(toolbox)
-      val task = SerializedJsonStatic.mapper.writeValueAsString(this)
+      val task = toolbox.getObjectMapper.writeValueAsString(this)
       log.debug("Sending task `%s`", task)
 
       val result = HadoopTask.invokeForeignLoader[util.ArrayList[String], util.ArrayList[String]](
@@ -157,7 +157,7 @@ class SparkBatchIndexTask(
         new util.ArrayList(List(task, Iterables.getOnlyElement(getTaskLocks(toolbox)).getVersion, outputPath)),
         classLoader
       )
-      toolbox.pushSegments(result.map(SerializedJsonStatic.mapper.readValue(_, classOf[DataSegment])))
+      toolbox.pushSegments(result.map(toolbox.getObjectMapper.readValue(_, classOf[DataSegment])))
       status = Option.apply(TaskStatus.success(getId))
     }
     catch {
