@@ -19,7 +19,6 @@
 
 package io.druid.indexer.spark
 
-import com.google.common.base.Strings
 import com.google.common.collect.ImmutableList
 import com.google.common.io.Closer
 import com.metamx.common.logger.Logger
@@ -120,12 +119,16 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
                 dataSchema.getParser.getParseSpec.getDimensionsSpec.getDimensionExclusions.asScala.toSet
             )
           for (dimension <- qindex.getDimensionNames.iterator().asScala) {
-            val dimVal = qindex.getDimValueLookup(dimension).asScala.map(Strings.nullToEmpty)
+            val dimVal = qindex.getDimValueLookup(dimension).asScala
             dimVal should not be 'Empty
             for (dv <- dimVal) {
-              dv should not be null
-              dv should not startWith "List("
-              dv should not startWith "Set("
+              Option(dv) match {
+                case Some(v) =>
+                  dv should not be null
+                  dv should not startWith "List("
+                  dv should not startWith "Set("
+                case None => //Ignore
+              }
             }
           }
           qindex.getNumRows should be > 0
