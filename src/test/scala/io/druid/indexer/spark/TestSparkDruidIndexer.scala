@@ -19,23 +19,22 @@
 
 package io.druid.indexer.spark
 
+import com.google.common.base.Strings
 import java.io.{Closeable, File}
 import java.nio.file.Files
 import java.util
-
 import com.google.common.collect.ImmutableList
 import com.google.common.io.Closer
 import com.metamx.common.logger.Logger
 import com.metamx.common.{CompressionUtils, Granularity, IAE}
 import io.druid.common.utils.JodaUtils
-import io.druid.data.input.impl.{DimensionsSpec, JSONParseSpec, TimestampSpec}
+import io.druid.data.input.impl.{DimensionsSpec, JSONParseSpec, StringDimensionSchema, TimestampSpec}
 import io.druid.query.aggregation.LongSumAggregatorFactory
 import io.druid.segment.QueryableIndexIndexableAdapter
 import org.apache.commons.io.FileUtils
 import org.apache.spark.{SparkConf, SparkContext}
 import org.joda.time.{DateTime, Interval}
 import org.scalatest._
-
 import scala.collection.JavaConverters._
 
 
@@ -99,7 +98,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers {
         segment.getSize should be > 0L
         segment.getDimensions.asScala.toSet should
           equal(
-            dataSchema.getParser.getParseSpec.getDimensionsSpec.getDimensions.asScala.toSet --
+            dataSchema.getParser.getParseSpec.getDimensionsSpec.getDimensionNames.asScala.toSet --
               dataSchema.getParser.getParseSpec.getDimensionsSpec.getDimensionExclusions.asScala.toSet
           )
         segment.getMetrics.asScala.toList should equal(dataSchema.getAggregators.map(_.getName).toList)
@@ -114,13 +113,14 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers {
           val qindex = new QueryableIndexIndexableAdapter(index)
           qindex.getDimensionNames.asScala.toSet should
             equal(
-              dataSchema.getParser.getParseSpec.getDimensionsSpec.getDimensions.asScala.toSet --
+              dataSchema.getParser.getParseSpec.getDimensionsSpec.getDimensionNames.asScala.toSet --
                 dataSchema.getParser.getParseSpec.getDimensionsSpec.getDimensionExclusions.asScala.toSet
             )
           for (dimension <- qindex.getDimensionNames.iterator().asScala) {
-            val dimVal = qindex.getDimValueLookup(dimension).asScala
+            val dimVal = qindex.getDimValueLookup(dimension).asScala.map(Strings.nullToEmpty)
             dimVal should not be 'Empty
             for (dv <- dimVal) {
+              dv should not be null
               dv should not startWith "List("
               dv should not startWith "Set("
             }
@@ -203,7 +203,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers {
       val aggregatorFactory = new LongSumAggregatorFactory(aggName, "met1")
       val dataSchema = buildDataSchema(
         parseSpec = new
-            JSONParseSpec(new TimestampSpec("ts", null, null), new DimensionsSpec(ImmutableList.of("dim1"), ImmutableList.of("ts"), null), null, null),
+            JSONParseSpec(new TimestampSpec("ts", null, null), new DimensionsSpec(ImmutableList.of(new StringDimensionSchema("dim1")), ImmutableList.of("ts"), null), null, null),
         aggFactories = Seq(aggregatorFactory)
       )
 

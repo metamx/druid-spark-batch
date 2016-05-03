@@ -149,7 +149,7 @@ object SparkDruidIndexer extends Logging {
     logInfo("Starting uniqes")
     val optionalDims: Option[Set[String]] = if (dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec.hasCustomDimensions) {
       val parseSpec = dataSchema.getDelegate.getParser.getParseSpec
-      Some(parseSpec.getDimensionsSpec.getDimensions.asScala.toSet)
+      Some(parseSpec.getDimensionsSpec.getDimensionNames.asScala.toSet)
     } else {
       None
     }
@@ -251,7 +251,7 @@ object SparkDruidIndexer extends Logging {
             val hadoopFs = outPath.getFileSystem(hadoopConf)
             val dimSpec = dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec
             val excludedDims = dimSpec.getDimensionExclusions
-            val finalDims: Option[util.List[String]] = if (dimSpec.hasCustomDimensions) Some(dimSpec.getDimensions) else None
+            val finalDims: Option[util.List[String]] = if (dimSpec.hasCustomDimensions) Some(dimSpec.getDimensionNames.asScala) else None
 
             val indices: util.List[IndexableAdapter] = rows.grouped(rowsPerPersist)
               .map(
@@ -350,9 +350,9 @@ object SparkDruidIndexer extends Logging {
               allDimensions,
               aggs.map(_.getDelegate.getName).toList,
               if (partitionCount == 1) {
-                new NoneShardSpec()
+                NoneShardSpec.instance()
               } else {
-                new HashBasedNumberedShardSpec(partitionNum, partitionCount, SerializedJsonStatic.mapper)
+                new HashBasedNumberedShardSpec(partitionNum, partitionCount, null, SerializedJsonStatic.mapper)
               },
               -1,
               -1
@@ -627,7 +627,7 @@ class DateBucketAndHashPartitioner(gran: Granularity,
     .map { case (bucket, indices) => bucket -> indices.size }
     .mapValues(maxPartitions => {
       val shardSpecs = (0 until maxPartitions)
-        .map(new HashBasedNumberedShardSpec(_, maxPartitions, SerializedJsonStatic.mapper).asInstanceOf[ShardSpec])
+        .map(new HashBasedNumberedShardSpec(_, maxPartitions, null, SerializedJsonStatic.mapper).asInstanceOf[ShardSpec])
       shardSpecs.head.getLookup(shardSpecs.asJava)
     })
   lazy val excludedDimensions = optionalDimExclusions.getOrElse(Set())

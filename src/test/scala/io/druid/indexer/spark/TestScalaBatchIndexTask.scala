@@ -74,7 +74,7 @@ object TestScalaBatchIndexTask
           "l_shipinstruct",
           "l_shipmode",
           "l_comment"
-        )
+        ).map(new StringDimensionSchema(_))
       ),
       seqAsJavaList(
         Seq(
@@ -209,7 +209,11 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
     val task = objectMapper.readValue(str, classOf[Task])
     task.getContext shouldBe 'Empty
     assertResult(SparkBatchIndexTask.TASK_TYPE)(task.getType)
-    taskPre should ===(task)
+
+    /** https://github.com/druid-io/druid/issues/2914
+      *     taskPre should ===(task)
+      */
+    task.asInstanceOf[SparkBatchIndexTask].getDataSchema.getParser.getParseSpec should ===(taskPre.getDataSchema.getParser.getParseSpec)
   }
 
   "The SparkBatchIndexTask" should "be equal for equal tasks" in {
