@@ -26,7 +26,9 @@ There are four key things that need configured to use this extension
 3. A task json needs configured.
 4. Spark is included in the default hadoop coordinates similar to `druid.indexer.task.defaultHadoopCoordinates=["org.apache.spark:spark-core_2.10:1.5.2-mmx1"]`
 
-To load the extension, use the appropriate coordinates (for druid 0.8.x the following should be added to `druid.extensions.coordinates`  : `io.druid.extensions:druid-spark-batch_2.10:jar:assembly:0.0.13`) or make certain the extension jars are located in the proper directories (druid 0.9.x and later with version 0.9.0.x of this library)
+To load the extension, use the appropriate coordinates (for druid 0.8.x the following should be added to `druid.extensions.coordinates`  : `io.druid.extensions:druid-spark-batch_2.10:jar:assembly:0.0.13`) or make certain the extension jars are located in the proper directories (druid 0.9.0 with version 0.9.0.x of this library, druid 0.9.1 with the 0.9.1.x version)
+
+The recommended method of pulling down the extensions is to use [pull-deps](http://druid.io/docs/latest/operations/pull-deps.html) to pull down the versions of interest. A Hadoop coordinate and an extension should be specified as per `-h org.apache.spark:spark-core_2.10:1.5.2-mmx4` and `-c io.druid.extensions:druid-spark-batch_2.10:0.9.1-0` (with the appropriate versions of course)
 
 ## Task JSON
 The following is an example spark batch task for the indexing service:
