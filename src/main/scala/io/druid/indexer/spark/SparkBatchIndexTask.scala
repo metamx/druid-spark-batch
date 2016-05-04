@@ -152,7 +152,7 @@ class SparkBatchIndexTask(
         new util.ArrayList(List(task, Iterables.getOnlyElement(getTaskLocks(toolbox)).getVersion, outputPath)),
         classLoader
       )
-      toolbox.pushSegments(result.map(toolbox.getObjectMapper.readValue(_, classOf[DataSegment])))
+      toolbox.publishSegments(result.map(toolbox.getObjectMapper.readValue(_, classOf[DataSegment])))
       status = Option.apply(TaskStatus.success(getId))
     }
     catch {
