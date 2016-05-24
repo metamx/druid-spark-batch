@@ -20,13 +20,13 @@
 package io.druid.indexer.spark
 
 import java.util.Properties
-
 import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.inject.name.Names
 import com.google.inject.{Binder, Module}
 import com.metamx.common.Granularity
 import io.druid.data.input.impl._
+import io.druid.granularity.QueryGranularities
 import io.druid.granularity.QueryGranularity
 import io.druid.guice.GuiceInjectors
 import io.druid.indexing.common.task.Task
@@ -38,7 +38,6 @@ import io.druid.segment.indexing.DataSchema
 import io.druid.segment.indexing.granularity.{GranularitySpec, UniformGranularitySpec}
 import org.joda.time.Interval
 import org.scalatest.{FlatSpec, Matchers}
-
 import scala.collection.JavaConversions._
 
 object TestScalaBatchIndexTask
@@ -139,7 +138,7 @@ object TestScalaBatchIndexTask
   }
   val master                                   = "local[999]"
 
-  val granSpec        = new UniformGranularitySpec(Granularity.YEAR, QueryGranularity.DAY, Seq(interval))
+  val granSpec        = new UniformGranularitySpec(Granularity.YEAR, QueryGranularities.DAY, Seq(interval))
   val dataSchema      = buildDataSchema()
   val indexSpec       = new IndexSpec()
   val classpathPrefix = "somePrefix.jar"
@@ -195,15 +194,21 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
     val taskPre = buildSparkBatchIndexTask()
     val taskPost = objectMapper.readValue(objectMapper.writeValueAsString(taskPre), classOf[SparkBatchIndexTask])
     val implVersion = classOf[QueryGranularity].getPackage.getImplementationVersion
-    if (implVersion >= "0.8.3" && implVersion.startsWith("0.")) {
-      // https://github.com/druid-io/druid/pull/1824
-      taskPre should equal(taskPost)
-    } else {
-      assume(false, "Druid version not high enough for test")
-    }
+    taskPre.rowFlushBoundary_ should equal(taskPost.rowFlushBoundary_)
+    taskPre.getDataSchema.getAggregators should equal(taskPost.getDataSchema.getAggregators)
+    taskPre.getDataSchema.getDataSource should equal(taskPost.getDataSchema.getDataSource)
+    taskPre.getDataSchema.getGranularitySpec should equal(taskPost.getDataSchema.getGranularitySpec)
+    // Skip checking parser.. see https://github.com/druid-io/druid/issues/2914
+    taskPre.getDataFiles should equal(taskPost.getDataFiles)
+    taskPre.aggregatorFactories_ should equal(taskPost.aggregatorFactories_)
+    taskPre.indexSpec_ should equal(taskPost.indexSpec_)
+    taskPre.master_ should equal(taskPost.master_)
+    taskPre.properties_ should equal(taskPost.properties_)
+    taskPre.targetPartitionSize_ should equal(taskPost.targetPartitionSize_)
+
   }
 
-  "The SparkBatchIndexTask" should "properly deserialize" in {
+  it should "properly deserialize" in {
     val taskPre = buildSparkBatchIndexTask()
     val str = "{\"type\":\"index_spark\",\"id\":\"taskId\",\"dataSchema\":{\"dataSource\":\"defaultDataSource\",\"parser\":{\"type\":\"string\",\"parseSpec\":{\"format\":\"tsv\",\"timestampSpec\":{\"column\":\"l_shipdate\",\"format\":\"yyyy-MM-dd\",\"missingValue\":null},\"dimensionsSpec\":{\"dimensions\":[\"l_orderkey\",\"l_partkey\",\"l_suppkey\",\"l_linenumber\",\"l_returnflag\",\"l_linestatus\",\"l_shipinstruct\",\"l_shipmode\",\"l_comment\"],\"dimensionExclusions\":[\"l_commitdate\",\"l_receiptdate\",\"l_tax\",\"l_quantity\",\"count\",\"l_extendedprice\",\"l_shipdate\",\"l_discount\"],\"spatialDimensions\":[]},\"delimiter\":\"|\",\"listDelimiter\":\",\",\"columns\":[\"l_orderkey\",\"l_partkey\",\"l_suppkey\",\"l_linenumber\",\"l_quantity\",\"l_extendedprice\",\"l_discount\",\"l_tax\",\"l_returnflag\",\"l_linestatus\",\"l_shipdate\",\"l_commitdate\",\"l_receiptdate\",\"l_shipinstruct\",\"l_shipmode\",\"l_comment\"]},\"encoding\":\"UTF-8\"},\"metricsSpec\":[{\"type\":\"count\",\"name\":\"count\"},{\"type\":\"longSum\",\"name\":\"L_QUANTITY_longSum\",\"fieldName\":\"l_quantity\"},{\"type\":\"doubleSum\",\"name\":\"L_EXTENDEDPRICE_doubleSum\",\"fieldName\":\"l_extendedprice\"},{\"type\":\"doubleSum\",\"name\":\"L_DISCOUNT_doubleSum\",\"fieldName\":\"l_discount\"},{\"type\":\"doubleSum\",\"name\":\"L_TAX_doubleSum\",\"fieldName\":\"l_tax\"}],\"granularitySpec\":{\"type\":\"uniform\",\"segmentGranularity\":\"YEAR\",\"queryGranularity\":{\"type\":\"duration\",\"duration\":86400000,\"origin\":\"1970-01-01T00:00:00.000Z\"},\"intervals\":[\"1992-01-01T00:00:00.000Z/1999-01-01T00:00:00.000Z\"]}},\"intervals\":[\"1992-01-01T00:00:00.000Z/1999-01-01T00:00:00.000Z\"],\"paths\":[\"file:/someFile\"],\"targetPartitionSize\":8139,\"maxRowsInMemory\":389,\"properties\":{\"some.property\":\"someValue\",\"java.util.logging.manager\":\"org.apache.logging.log4j.jul.LogManager\",\"user.timezone\":\"UTC\",\"org.jboss.logging.provider\":\"log4j2\",\"file.encoding\":\"UTF-8\",\"druid.processing.columnCache.sizeBytes\":\"1000000000\"},\"master\":\"local[999]\",\"context\":{},\"indexSpec\":{\"bitmap\":{\"type\":\"concise\"},\"dimensionCompression\":null,\"metricCompression\":null},\"classpathPrefix\":\"somePrefix.jar\",\"groupId\":\"taskId\",\"dataSource\":\"defaultDataSource\",\"resource\":{\"availabilityGroup\":\"taskId\",\"requiredCapacity\":1}}"
     val task = objectMapper.readValue(str, classOf[Task])
@@ -216,7 +221,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
     task.asInstanceOf[SparkBatchIndexTask].getDataSchema.getParser.getParseSpec should ===(taskPre.getDataSchema.getParser.getParseSpec)
   }
 
-  "The SparkBatchIndexTask" should "be equal for equal tasks" in {
+  it should "be equal for equal tasks" in {
     val task1 = buildSparkBatchIndexTask()
     val task2 = buildSparkBatchIndexTask()
     task1 should equal(task2)
@@ -231,7 +236,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
     )
   }
 
-  "The ScalaBatchIndexTask" should "not be equal for dissimilar tasks" in {
+  it should "not be equal for dissimilar tasks" in {
     val task1 = buildSparkBatchIndexTask()
     task1 should not equal buildSparkBatchIndexTask(id = taskId + "something else")
 
