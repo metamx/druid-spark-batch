@@ -19,20 +19,15 @@
 organization := "io.druid.extensions"
 name := "druid-spark-batch"
 
-net.virtualvoid.sbt.graph.Plugin.graphSettings
-
 licenses := Seq("Apache License, Version 2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0"))
 homepage := Some(url("https://github.com/metamx/druid-spark-batch"))
 
-scalaVersion := "2.10.5"
-crossScalaVersions := Seq("2.10.5", "2.11.7")
+scalaVersion := "2.11.7"
 
-// Requires 0.8.2 or later and https://github.com/druid-io/druid/pull/1940
 val druid_version = "0.9.1.1"
 // This is just used here for Path, so anything that doesn't break spark should be fine
 val hadoop_version = "2.4.0"
-// Requires a patch for https://issues.apache.org/jira/browse/SPARK-11016
-val spark_version = "1.6.1"
+val spark_version = "2.0.1-SNAPSHOT"
 val guava_version = "16.0.1"
 val mesos_version = "0.25.0"
 
