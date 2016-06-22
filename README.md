@@ -35,7 +35,7 @@ The following is an example spark batch task for the indexing service:
 
 ```json
 {
-    "dataFiles":["file:///Users/charlesallen/bin/wrk/lineitem.small.tbl"],
+    "paths":["/<your-druid-spark-batch-dir>/src/test/resources/lineitem.small.tbl"],
     "dataSchema": {
         "dataSource": "sparkTest",
         "granularitySpec": {
@@ -130,7 +130,6 @@ The following is an example spark batch task for the indexing service:
             "type": "string"
         }
     },
-    "dataSource": "someDataSource",
     "indexSpec": {
         "bitmap": {
             "type": "concise"
