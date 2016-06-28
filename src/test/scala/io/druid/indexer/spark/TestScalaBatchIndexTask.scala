@@ -220,7 +220,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
       *     taskPre should ===(task)
       */
     task.asInstanceOf[SparkBatchIndexTask].getDataSchema.getParser.getParseSpec should ===(taskPre.getDataSchema.getParser.getParseSpec)
-    task.asInstanceOf[SparkBatchIndexTask].getHadoopDependencyCoordinates.asScala.toSet should ===(Set("org.apache.spark:spark-core_2.10:1.6.1-mmx0"))
+    task.asInstanceOf[SparkBatchIndexTask].getHadoopDependencyCoordinates.asScala should ===(Seq("org.apache.spark:spark-core_2.10:1.6.1-mmx0"))
   }
 
   it should "be equal for equal tasks" in {
