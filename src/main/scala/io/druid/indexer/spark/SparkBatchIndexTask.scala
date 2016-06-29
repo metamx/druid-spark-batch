@@ -68,7 +68,9 @@ class SparkBatchIndexTask(
   @JsonProperty("indexSpec")
   indexSpec: IndexSpec = new IndexSpec(),
   @JsonProperty("classpathPrefix")
-  classpathPrefix: String = null
+  classpathPrefix: String = null,
+  @JsonProperty("hadoopDependencyCoordinates")
+  hadoopDependencyCoordinates: util.List[String] = null
 ) extends HadoopTask(
   if (id == null) {
     AbstractTask
@@ -82,7 +84,7 @@ class SparkBatchIndexTask(
     id
   },
   dataSchema.getDataSource,
-  null,
+  hadoopDependencyCoordinates,
   if (context == null) {
     Map[String, String]()
   }

@@ -165,3 +165,4 @@ The json keys accepted by the spark batch indexer are described below
 |`id`                 |String          |No                |Assigned based on `dataSource`, `intervals`, `and DateTime.now()`|The ID for the task. If not provied it will be assigned|
 |`indexSpec`          |InputSpec       |No                |concise, lz4, lz4|The InputSpec containing the various compressions to be used|
 |`context`            |Map             |No                |none             |The task context|
+|`hadoopDependencyCoordinates`|List of strings|No|`null` (use default set by druid config)|The spark dependency coordinates to load in the ClassLoader when launching the task|
