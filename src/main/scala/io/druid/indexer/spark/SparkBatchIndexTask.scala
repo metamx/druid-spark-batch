@@ -231,6 +231,9 @@ class SparkBatchIndexTask(
   @JsonProperty("classpathPrefix")
   override def getClasspathPrefix = classpathPrefix
 
+  @JsonProperty("hadoopDependencyCoordinates")
+  def getHadoopCoordinates = hadoopDependencyCoordinates
+
   override def toString = s"SparkBatchIndexTask($getType, $getId, $getDataSchema, $getIntervals, $getDataFiles, $getTargetPartitionSize, $getRowFlushBoundary, $getProperties, $getMaster, $getContext, $getIndexSpec, $getClasspathPrefix)"
 }
 

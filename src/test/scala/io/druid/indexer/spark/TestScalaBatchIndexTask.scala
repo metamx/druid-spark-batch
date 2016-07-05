@@ -20,6 +20,7 @@
 package io.druid.indexer.spark
 
 import java.util.Properties
+import java.util.Collections
 import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.inject.name.Names
@@ -139,10 +140,11 @@ object TestScalaBatchIndexTask
   }
   val master                                   = "local[999]"
 
-  val granSpec        = new UniformGranularitySpec(Granularity.YEAR, QueryGranularities.DAY, Seq(interval))
-  val dataSchema      = buildDataSchema()
-  val indexSpec       = new IndexSpec()
-  val classpathPrefix = "somePrefix.jar"
+  val granSpec                    = new UniformGranularitySpec(Granularity.YEAR, QueryGranularities.DAY, Seq(interval))
+  val dataSchema                  = buildDataSchema()
+  val indexSpec                   = new IndexSpec()
+  val classpathPrefix             = "somePrefix.jar"
+  val hadoopDependencyCoordinates = Collections.singletonList("some:coordinate:version")
 
   def buildDataSchema(
     dataSource: String = dataSource,
@@ -170,7 +172,8 @@ object TestScalaBatchIndexTask
     master: String = master,
     context: Map[String, Object] = Map(),
     indexSpec: IndexSpec = indexSpec,
-    classpathPrefix: String = classpathPrefix
+    classpathPrefix: String = classpathPrefix,
+    hadoopDependencyCoordinates: java.util.List[String] = hadoopDependencyCoordinates
   ): SparkBatchIndexTask = new SparkBatchIndexTask(
     id,
     dataSchema,
@@ -182,7 +185,8 @@ object TestScalaBatchIndexTask
     master,
     context,
     indexSpec,
-    classpathPrefix
+    classpathPrefix,
+    hadoopDependencyCoordinates
   )
 }
 
@@ -206,18 +210,18 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
     taskPre.master_ should equal(taskPost.master_)
     taskPre.properties_ should equal(taskPost.properties_)
     taskPre.targetPartitionSize_ should equal(taskPost.targetPartitionSize_)
-
+    taskPre.getHadoopDependencyCoordinates should equal(taskPost.getHadoopDependencyCoordinates)
+    taskPre.getHadoopDependencyCoordinates should equal(hadoopDependencyCoordinates)
   }
 
   it should "properly deserialize" in {
-    val taskPre = buildSparkBatchIndexTask()
-    val str = "{\"type\":\"index_spark\",\"id\":\"taskId\",\"dataSchema\":{\"dataSource\":\"defaultDataSource\",\"parser\":{\"type\":\"string\",\"parseSpec\":{\"format\":\"tsv\",\"timestampSpec\":{\"column\":\"l_shipdate\",\"format\":\"yyyy-MM-dd\",\"missingValue\":null},\"dimensionsSpec\":{\"dimensions\":[\"l_orderkey\",\"l_partkey\",\"l_suppkey\",\"l_linenumber\",\"l_returnflag\",\"l_linestatus\",\"l_shipinstruct\",\"l_shipmode\",\"l_comment\"],\"dimensionExclusions\":[\"l_commitdate\",\"l_receiptdate\",\"l_tax\",\"l_quantity\",\"count\",\"l_extendedprice\",\"l_shipdate\",\"l_discount\"],\"spatialDimensions\":[]},\"delimiter\":\"|\",\"listDelimiter\":\",\",\"columns\":[\"l_orderkey\",\"l_partkey\",\"l_suppkey\",\"l_linenumber\",\"l_quantity\",\"l_extendedprice\",\"l_discount\",\"l_tax\",\"l_returnflag\",\"l_linestatus\",\"l_shipdate\",\"l_commitdate\",\"l_receiptdate\",\"l_shipinstruct\",\"l_shipmode\",\"l_comment\"]},\"encoding\":\"UTF-8\"},\"metricsSpec\":[{\"type\":\"count\",\"name\":\"count\"},{\"type\":\"longSum\",\"name\":\"L_QUANTITY_longSum\",\"fieldName\":\"l_quantity\"},{\"type\":\"doubleSum\",\"name\":\"L_EXTENDEDPRICE_doubleSum\",\"fieldName\":\"l_extendedprice\"},{\"type\":\"doubleSum\",\"name\":\"L_DISCOUNT_doubleSum\",\"fieldName\":\"l_discount\"},{\"type\":\"doubleSum\",\"name\":\"L_TAX_doubleSum\",\"fieldName\":\"l_tax\"}],\"granularitySpec\":{\"type\":\"uniform\",\"segmentGranularity\":\"YEAR\",\"queryGranularity\":{\"type\":\"duration\",\"duration\":86400000,\"origin\":\"1970-01-01T00:00:00.000Z\"},\"intervals\":[\"1992-01-01T00:00:00.000Z/1999-01-01T00:00:00.000Z\"]}},\"intervals\":[\"1992-01-01T00:00:00.000Z/1999-01-01T00:00:00.000Z\"],\"paths\":[\"file:/someFile\"],\"targetPartitionSize\":8139,\"maxRowsInMemory\":389,\"properties\":{\"some.property\":\"someValue\",\"java.util.logging.manager\":\"org.apache.logging.log4j.jul.LogManager\",\"user.timezone\":\"UTC\",\"org.jboss.logging.provider\":\"log4j2\",\"file.encoding\":\"UTF-8\",\"druid.processing.columnCache.sizeBytes\":\"1000000000\"},\"master\":\"local[999]\",\"context\":{},\"indexSpec\":{\"bitmap\":{\"type\":\"concise\"},\"dimensionCompression\":null,\"metricCompression\":null},\"classpathPrefix\":\"somePrefix.jar\",\"hadoopDependencyCoordinates\":[\"org.apache.spark:spark-core_2.10:1.6.1-mmx0\"],\"groupId\":\"taskId\",\"dataSource\":\"defaultDataSource\",\"resource\":{\"availabilityGroup\":\"taskId\",\"requiredCapacity\":1}}"
-    val task = objectMapper.readValue(str, classOf[Task])
+    val taskPre: SparkBatchIndexTask = buildSparkBatchIndexTask()
+    val task: Task = objectMapper.readValue(getClass.getResource("/spark_index_spec.json"), classOf[Task])
     task.getContext shouldBe 'Empty
     assertResult(SparkBatchIndexTask.TASK_TYPE)(task.getType)
 
     /** https://github.com/druid-io/druid/issues/2914
-      *     taskPre should ===(task)
+      * taskPre should ===(task)
       */
     task.asInstanceOf[SparkBatchIndexTask].getDataSchema.getParser.getParseSpec should ===(taskPre.getDataSchema.getParser.getParseSpec)
     task.asInstanceOf[SparkBatchIndexTask].getHadoopDependencyCoordinates.asScala should ===(Seq("org.apache.spark:spark-core_2.10:1.6.1-mmx0"))
@@ -245,7 +249,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
     /** DataSchema compare is busted
       * task1 should not equal
       * buildSparkBatchIndexTask(dataSchema = buildDataSchema(dataSource = dataSource + "something else"))
-    */
+      */
 
     task1 should not equal buildSparkBatchIndexTask(dataFiles = dataFiles ++ List("something else"))
 
