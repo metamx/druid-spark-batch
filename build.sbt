@@ -49,11 +49,13 @@ val sparkDep = ("org.apache.spark" %% "spark-core" % spark_version
   exclude("org.eclipse.jetty", "jetty-http")
   exclude("org.eclipse.jetty", "jetty-servlet")
   exclude("com.esotericsoftware.minlog", "minlog")
+  /*
   exclude("com.fasterxml.jackson.core", "jackson-core")
   exclude("com.fasterxml.jackson.core", "jackson-annotations")
   exclude("com.fasterxml.jackson.dataformat", "jackson-dataformat-smile")
   exclude("com.fasterxml.jackson.datatype", "jackson-datatype-joda")
   exclude("com.fasterxml.jackson.core", "jackson-databind")
+  */
   exclude("io.netty", "netty")
   exclude("org.apache.mesos", "mesos")
   ) % "provided"
