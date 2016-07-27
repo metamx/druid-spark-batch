@@ -27,7 +27,7 @@ scalaVersion := "2.11.7"
 val druid_version = "0.9.1.1"
 // This is just used here for Path, so anything that doesn't break spark should be fine
 val hadoop_version = "2.4.0"
-val spark_version = "2.0.1-SNAPSHOT"
+val spark_version = "2.0.0"
 val guava_version = "16.0.1"
 val mesos_version = "0.25.0"
 
