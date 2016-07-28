@@ -53,14 +53,15 @@ import org.apache.hadoop.mapreduce.TaskAttemptID
 import org.apache.hadoop.util.Progressable
 import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.{Logging, Partitioner, SparkContext}
+import org.apache.spark.{Partitioner, SparkContext}
 import org.joda.time.{DateTime, Interval}
 
 import scala.collection.JavaConversions._
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-object SparkDruidIndexer extends Logging {
+object SparkDruidIndexer {
+  private val log = new Logger(getClass)
   def loadData(
                 dataFiles: Seq[String],
                 dataSchema: SerializedJson[DataSchema],
@@ -414,6 +415,22 @@ object SparkDruidIndexer extends Logging {
     .foldLeft(Map[(Long, Long), Int]())(
       (b: Map[(Long, Long), Int], v: (Long, Long)) => b + (v -> b.size)
     )
+
+  def logInfo(str: String): Unit = {
+    log.info(str, null)
+  }
+
+  def logTrace(str: String): Unit = {
+    log.trace(str, null)
+  }
+
+  def logDebug(str: String): Unit = {
+    log.debug(str, null)
+  }
+
+  def logError(str: String, t: Throwable): Unit = {
+    log.error(t, str, null)
+  }
 }
 
 object SerializedJsonStatic {
