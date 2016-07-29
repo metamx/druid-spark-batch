@@ -178,7 +178,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
   }
 
 
-  "The spark indexer" should "return proper DataSegments from json" in {
+  it should "return proper DataSegments from json" in {
     val data_files = Seq(this.getClass.getResource("/event.json").toString)
     val closer = Closer.create()
     val outDir = Files.createTempDirectory("segments").toFile
@@ -283,7 +283,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
   }
 
 
-  "The DateBucketPartitioner" should "throw an error if out of bounds" in {
+  it should "throw an error if out of bounds" in {
     val intervals = SparkBatchIndexTask.mapToSegmentIntervals(Seq(Interval.parse("1992/1993")), Granularity.YEAR)
     val partitioner = new DateBucketPartitioner(Granularity.YEAR, intervals)
     an[IAE] should be thrownBy {
@@ -291,7 +291,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
     }
   }
 
-  "The DateBucketPartitioner" should "properly partition for multiple timespans" in {
+  it should "properly partition for multiple timespans" in {
     val intervals = SparkBatchIndexTask.mapToSegmentIntervals(Seq(Interval.parse("1992/1999")), Granularity.YEAR)
     val partitioner = new DateBucketPartitioner(Granularity.YEAR, intervals)
     var idex = 0
@@ -304,7 +304,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
     idex should be(intervals.size)
   }
 
-  "The DateBucketAndHashPartitioner" should "properly partition single data" in {
+  it should "properly partition single data" in {
     val intervals = SparkBatchIndexTask.mapToSegmentIntervals(Seq(Interval.parse("1992/1993")), Granularity.YEAR)
     val partitioner = new
         DateBucketAndHashPartitioner(Granularity.YEAR, Map((new DateTime("1992").getMillis, 0L) -> 0))
@@ -312,7 +312,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
   }
 
 
-  "The DateBucketAndHashPartitioner" should "properly partition multiple date ranges" in {
+  it should "properly partition multiple date ranges" in {
     val intervals = SparkBatchIndexTask.mapToSegmentIntervals(Seq(Interval.parse("1992/1994")), Granularity.YEAR)
     val partitioner = new DateBucketAndHashPartitioner(
       Granularity.YEAR,
@@ -323,7 +323,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
   }
 
 
-  "The DateBucketAndHashPartitioner" should "properly partition disjoint date ranges" in {
+  it should "properly partition disjoint date ranges" in {
     val intervals = SparkBatchIndexTask
       .mapToSegmentIntervals(Seq(Interval.parse("1992/1993"), Interval.parse("1995/1996")), Granularity.YEAR)
     val partitioner = new DateBucketAndHashPartitioner(
@@ -346,8 +346,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
     partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "anotherHash1")) should equal(1)
   }
 
-  "The DateBucketAndHashPartitioner workflow" should
-    "properly partition multiple date ranges and buckets when dim is specified" in
+  it should "properly partition multiple date ranges and buckets when dim is specified" in
     {
       val intervals = SparkBatchIndexTask.mapToSegmentIntervals(Seq(Interval.parse("1992/1994")), Granularity.YEAR)
       val map = Map(new DateTime("1992").getMillis -> 100L, new DateTime("1993").getMillis -> 200L)
@@ -360,7 +359,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
       partitioner.getPartition(makeEvent(intervals.last.getEnd.minus(10L), "anotherHash1")) should equal(1)
     }
 
-  "The DateBucketAndHashPartitioner workflow" should "properly group multiple events together" in {
+  it should "properly group multiple events together" in {
     val intervals = SparkBatchIndexTask.mapToSegmentIntervals(Seq(Interval.parse("1992/1994")), Granularity.YEAR)
     val map = Map(new DateTime("1992").getMillis -> 100L, new DateTime("1993").getMillis -> 200L)
     val m = SparkDruidIndexer.getSizedPartitionMap(map, 150)
@@ -383,14 +382,14 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
     m.get((0L, 0L)) should equal(Some(0L))
   }
 
-  "getSizedPartitionMap" should "return nothing if unknown coordinates" in {
+  it should "return nothing if unknown coordinates" in {
     val map = Map(0L -> 100L)
     val m = SparkDruidIndexer.getSizedPartitionMap(map, 1000)
     m.size should equal(1)
     m.get((1L, 0L)) should be('empty)
   }
 
-  "getSizedPartitionMap" should "partition data correctly for single boundary counts" in {
+  it should "partition data correctly for single boundary counts" in {
     val map = Map(0L -> 100L)
     val m = SparkDruidIndexer.getSizedPartitionMap(map, 100)
     m.size should equal(2)
@@ -398,7 +397,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
     m.get((0L, 1L)) should equal(Some(1L))
   }
 
-  "getSizedPartitionMap" should "partition data correctly for multiple date buckets" in {
+  it should "partition data correctly for multiple date buckets" in {
     val map = Map(0L -> 100L, 1L -> 100L)
     val m = SparkDruidIndexer.getSizedPartitionMap(map, 1000)
     m.size should equal(2)
@@ -406,13 +405,13 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
     m.get((1L, 0L)) should equal(Some(1L))
   }
 
-  "getSizedPartitionMap" should "ignore empty intervals" in {
+  it should "ignore empty intervals" in {
     val map = Map(0L -> 100L, 1L -> 0L)
     val m = SparkDruidIndexer.getSizedPartitionMap(map, 1000)
     m.size should equal(1)
     m.get((0L, 0L)) should equal(Some(0L))
   }
-  "getSizedPartitionMap" should "properly index skipped intervals" in {
+  it should "properly index skipped intervals" in {
     val map = Map(0L -> 100L, 1L -> 0L, 2L -> 100L)
     val m = SparkDruidIndexer.getSizedPartitionMap(map, 1000)
     m.size should equal(2)
