@@ -166,3 +166,7 @@ The json keys accepted by the spark batch indexer are described below
 |`indexSpec`          |InputSpec       |No                |concise, lz4, lz4|The InputSpec containing the various compressions to be used|
 |`context`            |Map             |No                |none             |The task context|
 |`hadoopDependencyCoordinates`|List of strings|No|`null` (use default set by druid config)|The spark dependency coordinates to load in the ClassLoader when launching the task|
+
+### Deploying this project
+
+This project uses cross-building in SBT. Both 2.10 and 2.11 versions can be built and deployed with `sbt +release`
