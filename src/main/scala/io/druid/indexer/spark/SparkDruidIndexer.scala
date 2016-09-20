@@ -309,6 +309,7 @@ object SparkDruidIndexer {
             ).toList
             val file = StaticIndex.INDEX_MERGER.merge(
               indices,
+              true,
               aggs.map(_.getDelegate),
               tmpMergeDir,
               indexSpec_passable.getDelegate,
