@@ -1,5 +1,5 @@
 {
-  "type": "index_spark",
+  "type": "index_spark_2.10",
   "id": "taskId",
   "dataSchema": {
     "dataSource": "defaultDataSource",

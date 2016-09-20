@@ -243,7 +243,7 @@ object SparkBatchIndexTask
   private val DEFAULT_TARGET_PARTITION_SIZE: Long   = 5000000L
   private val CHILD_PROPERTY_PREFIX        : String = "druid.indexer.fork.property."
   val log       = new Logger(SparkBatchIndexTask.getClass)
-  val TASK_TYPE = "index_spark"
+  val TASK_TYPE = "index_spark_" + scala.util.Properties.versionNumberString.split("\\.").slice(0, 2).mkString(".")
 
   def mapToSegmentIntervals(originalIntervals: Iterable[Interval], granularity: Granularity): Iterable[Interval] = {
     originalIntervals.map(x => iterableAsScalaIterable(granularity.getIterable(x))).reduce(_ ++ _)

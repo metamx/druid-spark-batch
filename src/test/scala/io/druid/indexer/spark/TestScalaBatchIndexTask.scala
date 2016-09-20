@@ -216,7 +216,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
 
   it should "properly deserialize" in {
     val taskPre: SparkBatchIndexTask = buildSparkBatchIndexTask()
-    val task: Task = objectMapper.readValue(getClass.getResource("/spark_index_spec.json"), classOf[Task])
+    val task: Task = objectMapper.readValue(getClass.getResource("/" + SparkBatchIndexTask.TASK_TYPE + "_spec.json"), classOf[Task])
     task.getContext shouldBe 'Empty
     assertResult(SparkBatchIndexTask.TASK_TYPE)(task.getType)
 
