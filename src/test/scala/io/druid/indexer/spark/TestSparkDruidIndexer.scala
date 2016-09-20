@@ -429,6 +429,11 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
       }
     ) should be(2)
   }
+
+  "SparkBatchIndexer version" should "properly parse" in {
+    val validTypes = Set("index_spark_2.10", "index_spark_2.11", "index_spark_2.12")
+    validTypes should contain (SparkBatchIndexTask.TASK_TYPE)
+  }
 }
 
 object StaticTestSparkDruidIndexer

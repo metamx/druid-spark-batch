@@ -144,7 +144,7 @@ The following is an example spark batch task for the indexing service:
         "spark.io.compression.codec":"org.apache.spark.io.LZ4CompressionCodec"
     },
     "targetPartitionSize": 10000000,
-    "type": "index_spark"
+    "type": "index_spark_2.11"
 }
 ```
 
