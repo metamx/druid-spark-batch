@@ -124,13 +124,12 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
             for (dv <- dimVal) {
               Option(dv) match {
                 case Some(v) =>
-                  dv should not be null
                   // I had a problem at one point where dimension values were being stored as lists
                   // This is a check to make sure the dimension is a list of values rather than being a list of lists
                   // If the unit test is ever modified to have dimension values that start with this offending case
                   // then of course this test will fail.
-                  dv should not startWith "List("
-                  dv should not startWith "Set("
+                  dv.toString should not startWith "List("
+                  dv.toString should not startWith "Set("
                 case None => //Ignore
               }
             }

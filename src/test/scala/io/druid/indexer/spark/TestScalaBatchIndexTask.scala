@@ -19,12 +19,11 @@
 
 package io.druid.indexer.spark
 
-import java.util.Properties
-import java.util.Collections
 import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.inject.name.Names
-import com.google.inject.{Binder, Module}
+import com.google.inject.Binder
+import com.google.inject.Module
 import com.metamx.common.Granularity
 import io.druid.data.input.impl._
 import io.druid.granularity.QueryGranularities
@@ -32,13 +31,21 @@ import io.druid.granularity.QueryGranularity
 import io.druid.guice.GuiceInjectors
 import io.druid.indexing.common.task.Task
 import io.druid.initialization.Initialization
-import io.druid.query.aggregation.{AggregatorFactory, CountAggregatorFactory, DoubleSumAggregatorFactory, LongSumAggregatorFactory}
+import io.druid.query.aggregation.AggregatorFactory
+import io.druid.query.aggregation.CountAggregatorFactory
+import io.druid.query.aggregation.DoubleSumAggregatorFactory
+import io.druid.query.aggregation.LongSumAggregatorFactory
 import io.druid.segment.IndexSpec
+import io.druid.segment.data.CompressedObjectStrategy.CompressionStrategy
 import io.druid.segment.data.RoaringBitmapSerdeFactory
 import io.druid.segment.indexing.DataSchema
-import io.druid.segment.indexing.granularity.{GranularitySpec, UniformGranularitySpec}
+import io.druid.segment.indexing.granularity.GranularitySpec
+import io.druid.segment.indexing.granularity.UniformGranularitySpec
+import java.util.Collections
+import java.util.Properties
 import org.joda.time.Interval
-import org.scalatest.{FlatSpec, Matchers}
+import org.scalatest.FlatSpec
+import org.scalatest.Matchers
 import scala.collection.JavaConversions._
 import scala.collection.JavaConverters._
 
@@ -216,15 +223,18 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
 
   it should "properly deserialize" in {
     val taskPre: SparkBatchIndexTask = buildSparkBatchIndexTask()
-    val task: Task = objectMapper.readValue(getClass.getResource("/" + SparkBatchIndexTask.TASK_TYPE + "_spec.json"), classOf[Task])
+    val task: Task = objectMapper
+      .readValue(getClass.getResource("/" + SparkBatchIndexTask.TASK_TYPE + "_spec.json"), classOf[Task])
     task.getContext shouldBe 'Empty
     assertResult(SparkBatchIndexTask.TASK_TYPE)(task.getType)
 
     /** https://github.com/druid-io/druid/issues/2914
       * taskPre should ===(task)
       */
-    task.asInstanceOf[SparkBatchIndexTask].getDataSchema.getParser.getParseSpec should ===(taskPre.getDataSchema.getParser.getParseSpec)
-    task.asInstanceOf[SparkBatchIndexTask].getHadoopDependencyCoordinates.asScala should ===(Seq("org.apache.spark:spark-core_2.10:1.6.1-mmx0"))
+    task.asInstanceOf[SparkBatchIndexTask].getDataSchema.getParser.getParseSpec should
+      ===(taskPre.getDataSchema.getParser.getParseSpec)
+    task.asInstanceOf[SparkBatchIndexTask].getHadoopDependencyCoordinates.asScala should
+      ===(Seq("org.apache.spark:spark-core_2.10:1.6.1-mmx0"))
   }
 
   it should "be equal for equal tasks" in {
@@ -266,7 +276,14 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
 
     task1 should
       not equal
-      buildSparkBatchIndexTask(indexSpec = new IndexSpec(new RoaringBitmapSerdeFactory(), "lzf", "lzf"))
+      buildSparkBatchIndexTask(
+        indexSpec = new IndexSpec(
+          new RoaringBitmapSerdeFactory(false),
+          CompressionStrategy.LZ4,
+          CompressionStrategy.LZ4,
+          null
+        )
+      )
 
     task1 should not equal buildSparkBatchIndexTask(context = Map[String, Object]("test" -> "oops"))
 
