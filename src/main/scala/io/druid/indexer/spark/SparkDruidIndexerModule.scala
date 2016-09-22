@@ -19,22 +19,25 @@
 
 package io.druid.indexer.spark
 
-import java.util
-
 import com.fasterxml.jackson.databind.Module
 import com.fasterxml.jackson.databind.jsontype.NamedType
 import com.fasterxml.jackson.databind.module.SimpleModule
 import com.google.inject.Binder
 import io.druid.initialization.DruidModule
-
-import scala.collection.JavaConversions._
+import java.util
+import scala.collection.JavaConverters._
 
 class SparkDruidIndexerModule extends DruidModule
 {
-  override def getJacksonModules: util.List[_ <: Module] = List(
-    new SimpleModule("SparkDruidIndexer")
+  override def getJacksonModules: util.List[_ <: Module] = {
+    val module = new SimpleModule("SparkDruidIndexer")
       .registerSubtypes(new NamedType(classOf[SparkBatchIndexTask], SparkBatchIndexTask.TASK_TYPE))
-  )
+    if (scala.util.Properties.versionNumberString < "2.11") {
+      // Only for migration purposes. Prior releases had no suffix and were only 2.10
+      module.registerSubtypes(new NamedType(classOf[SparkBatchIndexTask], "index_spark"))
+    }
+    List(module).asJava
+  }
 
   override def configure(binder: Binder): Unit = {
     // NOOP
