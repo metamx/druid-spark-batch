@@ -19,13 +19,10 @@
 
 package io.druid.indexer.spark
 
-import java.io.{Closeable, File, IOException, PrintWriter}
-import java.nio.file.Files
-import java.util
-import java.util.{Objects, Properties}
-
-import com.fasterxml.jackson.annotation.{JsonCreator, JsonProperty}
-import com.google.common.base.{Preconditions, Strings}
+import com.fasterxml.jackson.annotation.JsonCreator
+import com.fasterxml.jackson.annotation.JsonProperty
+import com.google.common.base.Preconditions
+import com.google.common.base.Strings
 import com.google.common.collect.Iterables
 import com.google.common.io.Closer
 import com.metamx.common.Granularity
@@ -33,16 +30,27 @@ import com.metamx.common.logger.Logger
 import io.druid.common.utils.JodaUtils
 import io.druid.data.input.impl.ParseSpec
 import io.druid.granularity.QueryGranularity
-import io.druid.indexing.common.actions.{LockTryAcquireAction, TaskActionClient}
-import io.druid.indexing.common.task.{AbstractTask, HadoopTask}
-import io.druid.indexing.common.{TaskStatus, TaskToolbox}
+import io.druid.indexing.common.TaskStatus
+import io.druid.indexing.common.TaskToolbox
+import io.druid.indexing.common.actions.LockTryAcquireAction
+import io.druid.indexing.common.actions.TaskActionClient
+import io.druid.indexing.common.task.AbstractTask
+import io.druid.indexing.common.task.HadoopTask
 import io.druid.query.aggregation.AggregatorFactory
 import io.druid.segment.IndexSpec
 import io.druid.segment.indexing.DataSchema
 import io.druid.timeline.DataSegment
-import org.apache.spark.{SparkConf, SparkContext}
+import java.io.Closeable
+import java.io.File
+import java.io.IOException
+import java.io.PrintWriter
+import java.nio.file.Files
+import java.util
+import java.util.Objects
+import java.util.Properties
+import org.apache.spark.SparkConf
+import org.apache.spark.SparkContext
 import org.joda.time.Interval
-
 import scala.collection.JavaConversions._
 
 @JsonCreator
@@ -75,7 +83,7 @@ class SparkBatchIndexTask(
   if (id == null) {
     AbstractTask
       .makeId(
-        null, SparkBatchIndexTask.TASK_TYPE, dataSchema.getDataSource,
+        null, SparkBatchIndexTask.TASK_TYPE_BASE, dataSchema.getDataSource,
         JodaUtils
           .umbrellaInterval(JodaUtils.condenseIntervals(Preconditions.checkNotNull(intervals, "%s", "intervals")))
       )
@@ -131,7 +139,7 @@ class SparkBatchIndexTask(
       indexSpec
     }
 
-  override def getType: String = SparkBatchIndexTask.TASK_TYPE
+  override def getType: String = SparkBatchIndexTask.TASK_TYPE_BASE
 
   override def run(toolbox: TaskToolbox): TaskStatus = {
     Preconditions.checkNotNull(dataFiles, "%s", "paths")
@@ -242,8 +250,8 @@ object SparkBatchIndexTask
   private val DEFAULT_ROW_FLUSH_BOUNDARY   : Int    = 75000
   private val DEFAULT_TARGET_PARTITION_SIZE: Long   = 5000000L
   private val CHILD_PROPERTY_PREFIX        : String = "druid.indexer.fork.property."
-  val log       = new Logger(SparkBatchIndexTask.getClass)
-  val TASK_TYPE = "index_spark_" + scala.util.Properties.versionNumberString.split("\\.").slice(0, 2).mkString(".")
+  val log            = new Logger(SparkBatchIndexTask.getClass)
+  val TASK_TYPE_BASE = "index_spark"
 
   def mapToSegmentIntervals(originalIntervals: Iterable[Interval], granularity: Granularity): Iterable[Interval] = {
     originalIntervals.map(x => iterableAsScalaIterable(granularity.getIterable(x))).reduce(_ ++ _)
