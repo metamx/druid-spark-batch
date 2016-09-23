@@ -16,4 +16,5 @@
 # specific language governing permissions and limitations
 # under the License.
 #
-io.druid.indexer.spark.SparkDruidIndexerModule
+io.druid.indexer.spark.SparkDruidIndexerModule210
+io.druid.indexer.spark.SparkDruidIndexerModule211

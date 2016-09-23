@@ -170,3 +170,15 @@ The json keys accepted by the spark batch indexer are described below
 ### Deploying this project
 
 This project uses cross-building in SBT. Both 2.10 and 2.11 versions can be built and deployed with `sbt +release`
+
+### Upgrading to 0.9.2
+
+The upgrade path from 0.9.1 to 0.9.2 is as follows:
+
+1. Ensure you have both a Spark distribution for Scala 2.10 and Scala 2.11 available for hadoop coordinates.
+1. Ensure both `io.druid.extensions:druid-spark-batch_2.10` and `io.druid.extensions:druid-spark-batch_2.11` are included as extensions
+1. Leave the default hadoop coordinate as a Spark version compiled against Scala 2.10.
+1. Any task that uses the task id of `index_spark` will be assumed to be a Scala 2.10 Spark distribution.
+1. Any task that uses a task id of `index_spark_2.10` will also be assumed to be a scala 2.10 distribution.
+1. Any task that uses a task id of `index_spark_2.11` will use a 2.11 distribution.
+1. Update your task definitions to `index_spark_2.11` as quickly as desired.

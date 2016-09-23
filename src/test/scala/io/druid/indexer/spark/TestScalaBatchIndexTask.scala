@@ -21,9 +21,9 @@ package io.druid.indexer.spark
 
 import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.google.inject.name.Names
 import com.google.inject.Binder
 import com.google.inject.Module
+import com.google.inject.name.Names
 import com.metamx.common.Granularity
 import io.druid.data.input.impl._
 import io.druid.granularity.QueryGranularities
@@ -223,10 +223,9 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
 
   it should "properly deserialize" in {
     val taskPre: SparkBatchIndexTask = buildSparkBatchIndexTask()
-    val task: Task = objectMapper
-      .readValue(getClass.getResource("/" + SparkBatchIndexTask.TASK_TYPE + "_spec.json"), classOf[Task])
+    val task: Task = objectMapper.readValue(TaskConfProvider.taskConfURL, classOf[Task])
     task.getContext shouldBe 'Empty
-    assertResult(SparkBatchIndexTask.TASK_TYPE)(task.getType)
+    assertResult(SparkBatchIndexTask.TASK_TYPE_BASE)(task.getType)
 
     /** https://github.com/druid-io/druid/issues/2914
       * taskPre should ===(task)
