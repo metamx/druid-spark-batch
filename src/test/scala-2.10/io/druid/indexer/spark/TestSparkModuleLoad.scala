@@ -19,17 +19,17 @@
 
 package io.druid.indexer.spark
 
-import com.fasterxml.jackson.databind.Module
-import com.google.common.collect.ImmutableList
-import com.google.inject.Binder
 import io.druid.initialization.DruidModule
-import java.util
+import java.util.ServiceLoader
+import org.scalatest.FlatSpec
+import org.scalatest.Matchers
+import scala.collection.JavaConverters._
 
-class SparkDruidIndexerModule211 extends DruidModule
+class TestSparkModuleLoad  extends FlatSpec with Matchers
 {
-  override def getJacksonModules: util.List[_ <: Module] = ImmutableList.of()
-
-  override def configure(binder: Binder): Unit = {
-    // NOOP
+  "SparkDruidIndexerModules" should "load version 2.10 properly" in {
+    val loader: ServiceLoader[DruidModule] = ServiceLoader.load(classOf[DruidModule], classOf[TestSparkDruidIndexerModule].getClassLoader)
+    val module: DruidModule = loader.asScala.head
+    module.isInstanceOf[SparkDruidIndexerModule210] should be(true)
   }
 }

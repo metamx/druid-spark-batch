@@ -25,8 +25,10 @@ import com.google.inject.Module
 import io.druid.guice.GuiceInjectors
 import io.druid.guice.JsonConfigProvider
 import io.druid.guice.annotations.Self
+import io.druid.initialization.DruidModule
 import io.druid.initialization.Initialization
 import io.druid.server.DruidNode
+import java.util.ServiceLoader
 import org.scalatest.FlatSpec
 import org.scalatest.Matchers
 import scala.collection.JavaConverters._
@@ -34,6 +36,9 @@ import scala.collection.JavaConverters._
 class TestSparkDruidIndexerModule extends FlatSpec with Matchers
 {
   "SparkDruidIndexerModules" should "load properly" in {
+    val loader: ServiceLoader[DruidModule] = ServiceLoader.load(classOf[DruidModule], classOf[TestSparkDruidIndexerModule].getClassLoader)
+    val module: DruidModule = loader.asScala.head
+    module.getClass.getCanonicalName should startWith("io.druid.indexer.spark.SparkDruidIndexerModule")
     Initialization.makeInjectorWithModules(
       GuiceInjectors.makeStartupInjector(), Seq(
         new Module()
@@ -47,8 +52,7 @@ class TestSparkDruidIndexerModule extends FlatSpec with Matchers
               )
           }
         },
-        new SparkDruidIndexerModule210,
-        new SparkDruidIndexerModule211
+        module
       ).asJava
     )
   }
