@@ -107,6 +107,8 @@ libraryDependencies += "org.apache.mesos" % "mesos"  % mesos_version % "provided
 
 resourceDirectory in Compile := baseDirectory.value / "src" / "main" / s"resources_${CrossVersion.binaryScalaVersion(scalaVersion.value)}"
 
+releaseCrossBuild := true
+
 assemblyMergeStrategy in assembly := {
   case PathList("javax", "servlet", xs@_*) => MergeStrategy.first
   case PathList(ps@_*) if ps.last endsWith ".html" => MergeStrategy.first
