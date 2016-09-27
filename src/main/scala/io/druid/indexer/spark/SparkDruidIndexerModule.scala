@@ -19,7 +19,26 @@
 
 package io.druid.indexer.spark
 
-object TaskConfProvider
+import com.fasterxml.jackson.databind.Module
+import com.fasterxml.jackson.databind.jsontype.NamedType
+import com.fasterxml.jackson.databind.module.SimpleModule
+import com.google.inject.Binder
+import io.druid.initialization.DruidModule
+import java.util
+import scala.collection.JavaConverters._
+
+class SparkDruidIndexerModule extends DruidModule
 {
-  val taskConfURL = getClass.getResource("/" + SparkBatchIndexTask.TASK_TYPE_BASE + "_2.11_spec.json")
+  override def getJacksonModules: util.List[_ <: Module] = {
+    List(
+      new SimpleModule("SparkDruidIndexer")
+        .registerSubtypes(
+          new NamedType(classOf[SparkBatchIndexTask], "index_spark")
+        )
+    ).asJava
+  }
+
+  override def configure(binder: Binder): Unit = {
+    // NOOP
+  }
 }
