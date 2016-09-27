@@ -32,7 +32,6 @@ class SparkDruidIndexerModule210 extends DruidModule
   override def getJacksonModules: util.List[_ <: Module] = {
     val module = new SimpleModule("SparkDruidIndexer")
       .registerSubtypes(
-        new NamedType(classOf[SparkBatchIndexTask], "%s_2.10".format(SparkBatchIndexTask.TASK_TYPE_BASE)),
         // Only for migration purposes. Prior releases had no suffix and were only 2.10
         new NamedType(classOf[SparkBatchIndexTask], "index_spark")
       )

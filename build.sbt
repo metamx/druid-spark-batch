@@ -105,6 +105,8 @@ libraryDependencies += "com.sun.jersey" % "jersey-servlet" % "1.17.1" % "provide
 
 libraryDependencies += "org.apache.mesos" % "mesos"  % mesos_version % "provided"  classifier "shaded-protobuf"
 
+resourceDirectory in Compile := baseDirectory.value / "src" / "main" / s"resources_${CrossVersion.binaryScalaVersion(scalaVersion.value)}"
+
 assemblyMergeStrategy in assembly := {
   case PathList("javax", "servlet", xs@_*) => MergeStrategy.first
   case PathList(ps@_*) if ps.last endsWith ".html" => MergeStrategy.first
