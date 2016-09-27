@@ -169,7 +169,7 @@ The json keys accepted by the spark batch indexer are described below
 
 ### Deploying this project
 
-This project uses cross-building in SBT. Both 2.10 and 2.11 versions can be built and deployed with `sbt +release`
+This project uses cross-building in SBT. Both 2.10 and 2.11 versions can be built and deployed with `sbt release`
 
 ### Upgrading to 0.9.2
 
