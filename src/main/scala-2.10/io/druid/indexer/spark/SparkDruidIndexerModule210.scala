@@ -30,7 +30,7 @@ import scala.collection.JavaConverters._
 class SparkDruidIndexerModule210 extends DruidModule
 {
   override def getJacksonModules: util.List[_ <: Module] = {
-    val module = new SimpleModule("SparkDruidIndexer")
+    val module = new SimpleModule("SparkDruidIndexer210")
       .registerSubtypes(
         // Only for migration purposes. Prior releases had no suffix and were only 2.10
         new NamedType(classOf[SparkBatchIndexTask], "index_spark")
