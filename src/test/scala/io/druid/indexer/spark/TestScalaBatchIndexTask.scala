@@ -152,6 +152,7 @@ object TestScalaBatchIndexTask
   val indexSpec                   = new IndexSpec()
   val classpathPrefix             = "somePrefix.jar"
   val hadoopDependencyCoordinates = Collections.singletonList("some:coordinate:version")
+  val buildV9Directly             = true
 
   def buildDataSchema(
     dataSource: String = dataSource,
