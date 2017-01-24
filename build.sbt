@@ -23,7 +23,7 @@ licenses := Seq("Apache License, Version 2.0" -> url("http://www.apache.org/lice
 homepage := Some(url("https://github.com/metamx/druid-spark-batch"))
 crossScalaVersions := Seq("2.11.7", "2.10.6")
 
-val druid_version = "0.9.2-SNAPSHOT"
+val druid_version = "0.9.2"
 // This is just used here for Path, so anything that doesn't break spark should be fine
 val hadoop_version = "2.4.0"
 val spark_version = "2.0.0"
