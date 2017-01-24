@@ -70,6 +70,7 @@ object SparkDruidIndexer {
                 rowsPerPersist: Int,
                 outPathString: String,
                 indexSpec: IndexSpec,
+                buildV9Directly: Boolean,
                 sc: SparkContext
               ): Seq[DataSegment] = {
     val dataSource = dataSchema.getDelegate.getDataSource
@@ -253,6 +254,7 @@ object SparkDruidIndexer {
             val dimSpec = dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec
             val excludedDims = dimSpec.getDimensionExclusions
             val finalDims: Option[util.List[String]] = if (dimSpec.hasCustomDimensions) Some(dimSpec.getDimensionNames.asScala) else None
+            val finalStaticIndexer = if(buildV9Directly) StaticIndex.INDEX_MERGER_V9 else StaticIndex.INDEX_MERGER
 
             val indices: util.List[IndexableAdapter] = rows.grouped(rowsPerPersist)
               .map(
@@ -289,7 +291,7 @@ object SparkDruidIndexer {
                 val adapter = new QueryableIndexIndexableAdapter(
                   closer.register(
                     StaticIndex.INDEX_IO.loadIndex(
-                      StaticIndex.INDEX_MERGER
+                      finalStaticIndexer
                         .persist(
                           incIndex,
                           timeInterval,
@@ -307,7 +309,7 @@ object SparkDruidIndexer {
                 adapter
               }
             ).toList
-            val file = StaticIndex.INDEX_MERGER.merge(
+            val file = finalStaticIndexer.merge(
               indices,
               true,
               aggs.map(_.getDelegate),
@@ -690,4 +692,6 @@ object StaticIndex {
     override def columnCacheSizeBytes(): Int = 1000000
   })
   val INDEX_MERGER = new IndexMerger(SerializedJsonStatic.mapper, INDEX_IO)
+
+  val INDEX_MERGER_V9 = new IndexMergerV9(SerializedJsonStatic.mapper, INDEX_IO)
 }
