@@ -198,6 +198,18 @@ object TestScalaBatchIndexTask
     hadoopDependencyCoordinates,
     buildV9Directly
   )
+
+  def buildSparkBatchIndexTaskWithoutV9(
+    id: String = taskId,
+    dataSchema: DataSchema = dataSchema,
+    interval: Interval = interval,
+    dataFiles: Seq[String] = dataFiles
+  ): SparkBatchIndexTask = new SparkBatchIndexTask(
+    id,
+    dataSchema,
+    Seq(interval),
+    dataFiles
+  )
 }
 
 class TestScalaBatchIndexTask extends FlatSpec with Matchers
@@ -238,6 +250,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
       ===(taskPre.getDataSchema.getParser.getParseSpec)
     task.asInstanceOf[SparkBatchIndexTask].getHadoopDependencyCoordinates.asScala should
       ===(Seq("org.apache.spark:spark-core_2.10:1.6.1-mmx0"))
+    task.asInstanceOf[SparkBatchIndexTask].getBuildV9Directly should equal(false)
   }
 
   it should "be equal for equal tasks" in {
@@ -293,5 +306,11 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
     task1 should not equal buildSparkBatchIndexTask(classpathPrefix = "someOther.jar")
 
     task1 should not equal buildSparkBatchIndexTask(buildV9Directly = false)
+  }
+
+  it should "default buildV9Directly to false if not specified" in {
+
+    val taskWithoutV9 = buildSparkBatchIndexTaskWithoutV9()
+    taskWithoutV9.getBuildV9Directly should equal(false)
   }
 }
