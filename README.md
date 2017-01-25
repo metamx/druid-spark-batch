@@ -166,6 +166,7 @@ The json keys accepted by the spark batch indexer are described below
 |`indexSpec`          |InputSpec       |No                |concise, lz4, lz4|The InputSpec containing the various compressions to be used|
 |`context`            |Map             |No                |none             |The task context|
 |`hadoopDependencyCoordinates`|List of strings|No|`null` (use default set by druid config)|The spark dependency coordinates to load in the ClassLoader when launching the task|
+|`buildV9Directly`    |Boolean         |No                |False             |Build v9 index directly instead of building v8 index and converting it to v9 format.|
 
 ### Deploying this project
 

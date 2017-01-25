@@ -78,7 +78,9 @@ class SparkBatchIndexTask(
   @JsonProperty("classpathPrefix")
   classpathPrefix: String = null,
   @JsonProperty("hadoopDependencyCoordinates")
-  hadoopDependencyCoordinates: util.List[String] = null
+  hadoopDependencyCoordinates: util.List[String] = null,
+  @JsonProperty("buildV9Directly")
+  buildV9Directly: Boolean = false
 ) extends HadoopTask(
   if (id == null) {
     AbstractTask
@@ -195,7 +197,8 @@ class SparkBatchIndexTask(
       Objects.equals(getMaster, other.getMaster) &&
       Objects.equals(getContext, other.getContext) &&
       Objects.equals(getIndexSpec, other.getIndexSpec) &&
-      Objects.equals(getClasspathPrefix, other.getClasspathPrefix)
+      Objects.equals(getClasspathPrefix, other.getClasspathPrefix) &&
+      Objects.equals(getBuildV9Directly, other.getBuildV9Directly)
   }
 
   // This is kind of weird to get a lock that's not based on granularityIntervals but its how the hadoop indexer did it
@@ -242,7 +245,12 @@ class SparkBatchIndexTask(
   @JsonProperty("hadoopDependencyCoordinates")
   def getHadoopCoordinates = hadoopDependencyCoordinates
 
-  override def toString = s"SparkBatchIndexTask($getType, $getId, $getDataSchema, $getIntervals, $getDataFiles, $getTargetPartitionSize, $getRowFlushBoundary, $getProperties, $getMaster, $getContext, $getIndexSpec, $getClasspathPrefix)"
+  @JsonProperty("buildV9Directly")
+  def getBuildV9Directly = buildV9Directly
+
+  override def toString = s"SparkBatchIndexTask($getType, $getId, $getDataSchema, $getIntervals, $getDataFiles, " +
+    s"$getTargetPartitionSize, $getRowFlushBoundary, $getProperties, $getMaster, $getContext, $getIndexSpec, " +
+    s"$getClasspathPrefix, $getBuildV9Directly)"
 }
 
 object SparkBatchIndexTask
@@ -432,6 +440,7 @@ object SparkBatchIndexTask
         task.getRowFlushBoundary,
         outputPath,
         task.getIndexSpec,
+        task.getBuildV9Directly,
         sc
       ).map(_.withVersion(version))
       log.info("Found segments `%s`", util.Arrays.deepToString(dataSegments.toArray))

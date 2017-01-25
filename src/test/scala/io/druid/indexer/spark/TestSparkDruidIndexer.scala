@@ -87,6 +87,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         rowsPerFlush,
         outDir.toString,
         indexSpec,
+        buildV9Directly,
         sc
       )
       loadResults.length should be(7)
@@ -231,6 +232,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         rowsPerFlush,
         outDir.toString,
         indexSpec,
+        buildV9Directly,
         sc
       )
       loadResults.length should be(1)
