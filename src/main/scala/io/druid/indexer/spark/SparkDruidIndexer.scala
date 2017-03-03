@@ -361,21 +361,7 @@ object SparkDruidIndexer {
               -1,
               -1
             )
-            val dataSegment = JobHelper.serializeOutIndex(
-              dataSegmentTemplate,
-              hadoopConf,
-              new Progressable {
-                override def progress(): Unit = logDebug("Progress")
-              },
-              new TaskAttemptID(new org.apache.hadoop.mapred.TaskID(), index),
-              file,
-              JobHelper.makeSegmentOutputPath(
-                outPath,
-                hadoopFs,
-                dataSegmentTemplate
-              )
-            )
-            val finalDataSegment = pusher.push(file, dataSegment)
+            val finalDataSegment = pusher.push(file, dataSegmentTemplate)
             logInfo(s"Finished pushing $finalDataSegment")
             Seq(new SerializedJson[DataSegment](finalDataSegment)).iterator
           }
