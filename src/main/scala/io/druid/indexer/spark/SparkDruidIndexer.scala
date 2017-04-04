@@ -86,7 +86,16 @@ object SparkDruidIndexer {
       s => {
         val p = new Path(s)
         val fs = p.getFileSystem(sc.hadoopConfiguration)
-        fs.getFileStatus(p).getLen
+        if (fs.getFileStatus(p).isDirectory) {
+          var sum = 0l
+          val children = fs.listFiles(p, false)
+          while(children.hasNext) {
+            sum += children.next().getLen
+          }
+          sum
+        } else {
+          fs.getFileStatus(p).getLen
+        }
       }
     ).sum
     val startingPartitions = (totalGZSize / (100L << 20)).toInt + 1
