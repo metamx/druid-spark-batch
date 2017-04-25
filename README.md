@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/metamx/druid-spark-batch.svg?branch=master)](https://travis-ci.org/metamx/druid-spark-batch)
+
 # druid-spark-batch
 Druid indexing plugin for using Spark in batch jobs
 
