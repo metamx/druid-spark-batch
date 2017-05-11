@@ -25,6 +25,8 @@ import com.google.inject.Binder
 import com.google.inject.Module
 import com.google.inject.name.Names
 import com.metamx.common.Granularity
+import com.metamx.common.lifecycle.Lifecycle
+import com.metamx.emitter.core.{HttpPostEmitter, NoopEmitter}
 import io.druid.data.input.impl._
 import io.druid.granularity.QueryGranularities
 import io.druid.granularity.QueryGranularity
@@ -153,6 +155,7 @@ object TestScalaBatchIndexTask
   val classpathPrefix             = "somePrefix.jar"
   val hadoopDependencyCoordinates = Collections.singletonList("some:coordinate:version")
   val buildV9Directly             = true
+  val lifeCycle                   = new Lifecycle
 
   def buildDataSchema(
     dataSource: String = dataSource,
@@ -312,5 +315,29 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
 
     val taskWithoutV9 = buildSparkBatchIndexTaskWithoutV9()
     taskWithoutV9.getBuildV9Directly should equal(false)
+  }
+
+  it should "provide default noop emitter" in {
+    val emitter = SparkBatchIndexTask.createEmitter(properties, lifeCycle)
+
+    emitter.getClass should equal(classOf[NoopEmitter])
+  }
+
+  it should "provide http emitter" in {
+    val props = new Properties()
+    props.putAll(
+      Map(
+        ("user.timezone", "UTC"),
+        ("file.encoding", "UTF-8"),
+        ("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager"),
+        ("org.jboss.logging.provider", "log4j2"),
+        ("druid.processing.columnCache.sizeBytes", "1000000000"),
+        ("com.metamx.emitter.http", "true"),
+        ("com.metamx.emitter.http.url", "https://dummy.url")
+      )
+    )
+    val emitter = SparkBatchIndexTask.createEmitter(props, lifeCycle)
+
+    emitter.getClass should equal(classOf[HttpPostEmitter])
   }
 }

@@ -27,6 +27,10 @@ import com.google.common.collect.Iterables
 import com.google.common.io.Closer
 import com.metamx.common.Granularity
 import com.metamx.common.logger.Logger
+import com.metamx.common.lifecycle.Lifecycle
+import com.metamx.emitter.core._
+import com.metamx.emitter.service.{ServiceEmitter, ServiceMetricEvent}
+import com.metamx.http.client.{HttpClientConfig, HttpClientInit}
 import io.druid.common.utils.JodaUtils
 import io.druid.data.input.impl.ParseSpec
 import io.druid.granularity.QueryGranularity
@@ -48,9 +52,11 @@ import java.nio.file.Files
 import java.util
 import java.util.Objects
 import java.util.Properties
+import javax.net.ssl.SSLContext
 import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
-import org.joda.time.Interval
+import org.apache.spark.scheduler.{AccumulableInfo, SparkListener, SparkListenerStageCompleted}
+import org.joda.time.{Interval, Period}
 import scala.collection.JavaConversions._
 
 @JsonCreator
@@ -259,6 +265,7 @@ object SparkBatchIndexTask
   private val DEFAULT_TARGET_PARTITION_SIZE: Long   = 5000000L
   private val CHILD_PROPERTY_PREFIX        : String = "druid.indexer.fork.property."
   val log            = new Logger(SparkBatchIndexTask.getClass)
+  val lifecycle      = SerializedJsonStatic.lifecycle
   val TASK_TYPE_BASE = "index_spark"
 
   def mapToSegmentIntervals(originalIntervals: Iterable[Interval], granularity: Granularity): Iterable[Interval] = {
@@ -407,6 +414,46 @@ object SparkBatchIndexTask
         }
       )
 
+      log.info("Initializing emitter for metrics")
+
+      val service = task.getProperties.getProperty("com.metamx.emitter.service", "druid/batch/index")
+      val host = task.getProperties.getProperty("com.metamx.emitter.host", "127.0.0.1")
+
+      val emitter = new ServiceEmitter(service, host, createEmitter(task.getProperties, lifecycle))
+
+      lifecycle.start()
+
+      closer.register(
+        new Closeable {
+          override def close(): Unit = lifecycle.stop()
+        }
+      )
+
+      sc.addSparkListener(new SparkListener() {
+        // Emit metrics at the end of each stage
+        override def onStageCompleted(event: SparkListenerStageCompleted): Unit = {
+          val accumulatedInfo = event.stageInfo.accumulables.flatMap {
+            case (_, AccumulableInfo(_, Some(name), _, Some(value: Long), _, _, _)) =>
+              Some(name -> value)
+
+            case _ =>
+              None
+          }.toMap
+
+          accumulatedInfo foreach { case (aggName, value) =>
+            log.info("emitting metric: %s".format(aggName))
+            emitter.emit(
+              ServiceMetricEvent
+                .builder()
+                .setDimension("taskId", task.getId)
+                .setDimension("stageId", event.stageInfo.stageId.toString)
+                .setDimension("interval", SerializedJsonStatic.mapper.writeValueAsString(task.getIntervals))
+                .build(aggName, value)
+            )
+          }
+        }
+      })
+
       // Should be set by HadoopTask for job jars
       // Hadoop tasks use io.druid.indexer.JobHelper::setupClasspath to replicate their jars.
       // The jars are put in some universally accessable location and each job addresses them.
@@ -452,5 +499,32 @@ object SparkBatchIndexTask
     finally {
       closer.close()
     }
+  }
+
+  def createEmitter(props: Properties, lifecycle: Lifecycle): Emitter = {
+    val httpClient = HttpClientInit.createClient(
+      new HttpClientConfig(1, SSLContext.getDefault, new Period("PT5M").toStandardDuration),
+      lifecycle
+    )
+
+    val emitterBuilder = new EmitterBuilder
+
+    // If HttpEmitterConfig is not set, EmitterBuilder will build a NoopEmitter
+    if (props.getProperty("com.metamx.emitter.http") != null) {
+      Option(props.getProperty("com.metamx.emitter.http.url")) match {
+        case Some(url) =>
+          emitterBuilder.setHttpEmitterConfig(
+            new HttpEmitterConfig(
+              60000,
+              500,
+              url
+            )
+          )
+
+        case None => throw new IllegalArgumentException("com.metamx.emitter.http.url needs to be set")
+      }
+    }
+
+    emitterBuilder.build(SerializedJsonStatic.mapper, httpClient, lifecycle)
   }
 }

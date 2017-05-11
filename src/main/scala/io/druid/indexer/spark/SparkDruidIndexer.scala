@@ -29,13 +29,14 @@ import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.common.io.Closer
 import com.google.inject.{Binder, Injector, Key, Module}
+import com.metamx.common.lifecycle.Lifecycle
 import com.metamx.common.logger.Logger
 import com.metamx.common.{Granularity, IAE, ISE}
 import io.druid.data.input.impl._
 import io.druid.data.input.{MapBasedInputRow, ProtoBufInputRowParser}
 import io.druid.guice.annotations.{Json, Self}
 import io.druid.guice.{GuiceInjectors, JsonConfigProvider}
-import io.druid.indexer.{HadoopyStringInputRowParser, JobHelper}
+import io.druid.indexer.HadoopyStringInputRowParser
 import io.druid.initialization.Initialization
 import io.druid.query.aggregation.AggregatorFactory
 import io.druid.segment._
@@ -49,8 +50,6 @@ import io.druid.timeline.partition.{HashBasedNumberedShardSpec, NoneShardSpec, S
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-import org.apache.hadoop.mapreduce.TaskAttemptID
-import org.apache.hadoop.util.Progressable
 import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.{Partitioner, SparkContext}
@@ -458,6 +457,16 @@ object SerializedJsonStatic {
     catch {
       case NonFatal(e) =>
         LOG.error(e, "Error getting object mapper instance")
+        throw e
+    }
+  }
+
+  lazy val lifecycle: Lifecycle = {
+    try {
+      injector.getInstance(classOf[Lifecycle])
+    } catch {
+      case NonFatal(e) =>
+        LOG.error(e, "Error getting life cycle instance")
         throw e
     }
   }
