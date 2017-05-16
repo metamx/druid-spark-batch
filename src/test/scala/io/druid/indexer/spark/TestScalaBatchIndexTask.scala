@@ -21,12 +21,10 @@ package io.druid.indexer.spark
 
 import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.google.common.io.Closer
 import com.google.inject.Binder
 import com.google.inject.Module
 import com.google.inject.name.Names
 import com.metamx.common.Granularity
-import com.metamx.common.lifecycle.Lifecycle
 import io.druid.data.input.impl._
 import io.druid.granularity.QueryGranularities
 import io.druid.granularity.QueryGranularity
@@ -155,7 +153,6 @@ object TestScalaBatchIndexTask
   val classpathPrefix             = "somePrefix.jar"
   val hadoopDependencyCoordinates = Collections.singletonList("some:coordinate:version")
   val buildV9Directly             = true
-  val lifeCycle                   = new Lifecycle
 
   def buildDataSchema(
     dataSource: String = dataSource,
