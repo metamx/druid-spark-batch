@@ -174,6 +174,8 @@ The json keys accepted by the spark batch indexer are described below
 
 This project uses cross-building in SBT. Both 2.10 and 2.11 versions can be built and deployed with `sbt release`
 
+For setting repository credentials to be able to publish a release, refer to https://stackoverflow.com/a/19598435
+
 ### Upgrading to 0.9.2
 
 There is now a version for scala 2.10 and scala 2.11. Only ONE of which may be used at any given time.
