@@ -598,7 +598,7 @@ class SerializedHadoopConfig(delegate: Configuration) extends KryoSerializable w
   }
 }
 
-class DateBucketPartitioner(gran: Granularity, intervals: Iterable[Interval]) extends Partitioner {
+class DateBucketPartitioner(@transient var gran: Granularity, intervals: Iterable[Interval]) extends Partitioner {
   val intervalMap: Map[Long, Int] = intervals
     .map(_.getStart.getMillis)
     .foldLeft(Map[Long, Int]())((a, b) => a + (b -> a.size))
@@ -609,7 +609,7 @@ class DateBucketPartitioner(gran: Granularity, intervals: Iterable[Interval]) ex
     case null => throw new NullPointerException("Bad partition key")
     case (k: Long, v: Any) => getPartition(k)
     case (k: Long) =>
-      val mapKey = gran.bucket(new DateTime(k)).getStart.getMillis
+      val mapKey = gran.bucketStart(new DateTime(k)).getMillis
       val v = intervalMap.get(mapKey)
       if (v.isEmpty) {
         // Lazy ISE creation. getOrElse will create it each time
@@ -620,9 +620,21 @@ class DateBucketPartitioner(gran: Granularity, intervals: Iterable[Interval]) ex
       v.get
     case x => throw new IAE(s"Unknown type for $x")
   }
+
+  @throws(classOf[IOException])
+  private def writeObject(out: ObjectOutputStream): Unit = {
+    out.defaultWriteObject()
+    out.writeObject(new SerializedJson[Granularity](gran))
+  }
+
+  @throws(classOf[IOException])
+  private def readObject(in: ObjectInputStream): Unit = {
+    in.defaultReadObject()
+    gran = in.readObject().asInstanceOf[SerializedJson[Granularity]].delegate
+  }
 }
 
-class DateBucketAndHashPartitioner(gran: Granularity,
+class DateBucketAndHashPartitioner(@transient var gran: Granularity,
                                    partMap: Map[(Long, Long), Int],
                                    optionalDims: Option[Set[String]] = None,
                                    optionalDimExclusions: Option[Set[String]] = None
@@ -669,6 +681,18 @@ class DateBucketAndHashPartitioner(gran: Granularity,
         case None => throw new ISE(s"bad date and partition combo: ($dateBucket, $timePartNum)")
       }
     case x => throw new IAE(s"Unknown type ${x.getClass} : [$x]")
+  }
+
+  @throws(classOf[IOException])
+  private def writeObject(out: ObjectOutputStream): Unit = {
+    out.defaultWriteObject()
+    out.writeObject(new SerializedJson[Granularity](gran))
+  }
+
+  @throws(classOf[IOException])
+  private def readObject(in: ObjectInputStream): Unit = {
+    in.defaultReadObject()
+    gran = in.readObject().asInstanceOf[SerializedJson[Granularity]].delegate
   }
 }
 

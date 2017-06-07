@@ -113,7 +113,9 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         val segDir = Files.createTempDirectory(outDir.toPath, "loadableSegment-%s" format segment.getIdentifier).toFile
         val copyResult = CompressionUtils.unzip(file, segDir)
         copyResult.size should be > 0L
-        copyResult.getFiles.asScala.map(_.getName).toSet should equal(Set("00000.smoosh", "meta.smoosh", "version.bin"))
+        copyResult.getFiles.asScala.map(_.getName).toSet should equal(
+          Set("00000.smoosh", "meta.smoosh", "version.bin", "factory.json")
+        )
         val index = StaticIndex.INDEX_IO.loadIndex(segDir)
         try {
           val qindex = new QueryableIndexIndexableAdapter(index)
@@ -254,7 +256,9 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         val segDir = Files.createTempDirectory(outDir.toPath, "loadableSegment-%s" format segment.getIdentifier).toFile
         val copyResult = CompressionUtils.unzip(file, segDir)
         copyResult.size should be > 0L
-        copyResult.getFiles.asScala.map(_.getName).toSet should equal(Set("00000.smoosh", "meta.smoosh", "version.bin"))
+        copyResult.getFiles.asScala.map(_.getName).toSet should equal(
+          Set("00000.smoosh", "meta.smoosh", "version.bin", "factory.json")
+        )
         val index = StaticIndex.INDEX_IO.loadIndex(segDir)
         try {
           val qindex = new QueryableIndexIndexableAdapter(index)

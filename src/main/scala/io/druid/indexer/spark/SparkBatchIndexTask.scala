@@ -31,9 +31,9 @@ import com.google.common.io.Closer
 import com.metamx.common.logger.Logger
 import io.druid.common.utils.JodaUtils
 import io.druid.data.input.impl.ParseSpec
-import io.druid.indexing.common.{TaskStatus, TaskToolbox}
 import io.druid.indexing.common.actions.{LockTryAcquireAction, TaskActionClient}
 import io.druid.indexing.common.task.{AbstractTask, HadoopTask}
+import io.druid.indexing.common.{TaskStatus, TaskToolbox}
 import io.druid.java.util.common.granularity._
 import io.druid.query.aggregation.AggregatorFactory
 import io.druid.segment.IndexSpec
@@ -275,7 +275,7 @@ object SparkBatchIndexTask
   def getKryoClasses() = Array(
     classOf[SerializedHadoopConfig],
     classOf[SerializedJson[DataSegment]],
-    classOf[SerializedJson[PeriodGranularity]],
+    classOf[SerializedJson[Granularity]],
     classOf[SerializedJson[AggregatorFactory]],
     classOf[SerializedJson[ParseSpec]],
     classOf[SerializedJson[IndexSpec]],
