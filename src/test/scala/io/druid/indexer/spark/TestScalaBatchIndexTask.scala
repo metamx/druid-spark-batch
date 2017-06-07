@@ -19,18 +19,17 @@
 
 package io.druid.indexer.spark
 
+import java.util.{Collections, Properties}
+
 import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.google.inject.Binder
-import com.google.inject.Module
+import com.google.inject.{Binder, Module}
 import com.google.inject.name.Names
-import com.metamx.common.Granularity
 import io.druid.data.input.impl._
-import io.druid.granularity.QueryGranularities
-import io.druid.granularity.QueryGranularity
 import io.druid.guice.GuiceInjectors
 import io.druid.indexing.common.task.Task
 import io.druid.initialization.Initialization
+import io.druid.java.util.common.granularity.{Granularities, Granularity}
 import io.druid.query.aggregation.AggregatorFactory
 import io.druid.query.aggregation.CountAggregatorFactory
 import io.druid.query.aggregation.DoubleSumAggregatorFactory
@@ -39,13 +38,10 @@ import io.druid.segment.IndexSpec
 import io.druid.segment.data.CompressedObjectStrategy.CompressionStrategy
 import io.druid.segment.data.RoaringBitmapSerdeFactory
 import io.druid.segment.indexing.DataSchema
-import io.druid.segment.indexing.granularity.GranularitySpec
-import io.druid.segment.indexing.granularity.UniformGranularitySpec
-import java.util.Collections
-import java.util.Properties
+import io.druid.segment.indexing.granularity.{GranularitySpec, UniformGranularitySpec}
 import org.joda.time.Interval
-import org.scalatest.FlatSpec
-import org.scalatest.Matchers
+import org.scalatest.{FlatSpec, Matchers}
+
 import scala.collection.JavaConversions._
 import scala.collection.JavaConverters._
 
@@ -147,7 +143,7 @@ object TestScalaBatchIndexTask
   }
   val master                                   = "local[999]"
 
-  val granSpec                    = new UniformGranularitySpec(Granularity.YEAR, QueryGranularities.DAY, Seq(interval))
+  val granSpec                    = new UniformGranularitySpec(Granularities.YEAR, Granularities.DAY, Seq(interval))
   val dataSchema                  = buildDataSchema()
   val indexSpec                   = new IndexSpec()
   val classpathPrefix             = "somePrefix.jar"
@@ -220,7 +216,7 @@ class TestScalaBatchIndexTask extends FlatSpec with Matchers
   "The ScalaBatchIndexTask" should "properly SerDe a full object" in {
     val taskPre = buildSparkBatchIndexTask()
     val taskPost = objectMapper.readValue(objectMapper.writeValueAsString(taskPre), classOf[SparkBatchIndexTask])
-    val implVersion = classOf[QueryGranularity].getPackage.getImplementationVersion
+    val implVersion = classOf[Granularity].getPackage.getImplementationVersion
     taskPre.rowFlushBoundary_ should equal(taskPost.rowFlushBoundary_)
     taskPre.getDataSchema.getAggregators should equal(taskPost.getDataSchema.getAggregators)
     taskPre.getDataSchema.getDataSource should equal(taskPost.getDataSchema.getDataSource)

@@ -30,13 +30,14 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.common.io.Closer
 import com.google.inject.{Binder, Injector, Key, Module}
 import com.metamx.common.logger.Logger
-import com.metamx.common.{Granularity, IAE, ISE}
+import com.metamx.common.{IAE, ISE}
 import io.druid.data.input.impl._
 import io.druid.data.input.{MapBasedInputRow, ProtoBufInputRowParser}
 import io.druid.guice.annotations.{Json, Self}
 import io.druid.guice.{GuiceInjectors, JsonConfigProvider}
-import io.druid.indexer.{HadoopyStringInputRowParser, JobHelper}
+import io.druid.indexer.HadoopyStringInputRowParser
 import io.druid.initialization.Initialization
+import io.druid.java.util.common.granularity.Granularity
 import io.druid.query.aggregation.AggregatorFactory
 import io.druid.segment._
 import io.druid.segment.column.ColumnConfig
@@ -49,8 +50,6 @@ import io.druid.timeline.partition.{HashBasedNumberedShardSpec, NoneShardSpec, S
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-import org.apache.hadoop.mapreduce.TaskAttemptID
-import org.apache.hadoop.util.Progressable
 import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.{Partitioner, SparkContext}
@@ -137,10 +136,10 @@ object SparkDruidIndexer {
           val segmentGran = dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity
           i.map(
             r => {
-              var k: Long = queryGran.truncate(r.getTimestampFromEpoch)
+              var k: Long = queryGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis
               if (k < 0) {
                 // Example: AllGranularity
-                k = segmentGran.truncate(new DateTime(r.getTimestampFromEpoch)).getMillis
+                k = segmentGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis
               }
               k -> r.asInstanceOf[MapBasedInputRow].getEvent
             }
@@ -170,7 +169,7 @@ object SparkDruidIndexer {
     ).map(
       x => dataSchema.getDelegate.getGranularitySpec
         .getSegmentGranularity
-        .truncate(new DateTime(x._1))
+        .bucketStart(new DateTime(x._1))
         .getMillis -> x._2
     ).reduceByKey(_ + _).collect().toMap
 
@@ -650,7 +649,7 @@ class DateBucketAndHashPartitioner(gran: Granularity,
         case x =>
           throw new IAE(s"Unknown value type ${x.getClass} : [$x]")
       }
-      val dateBucket = gran.truncate(new DateTime(k)).getMillis
+      val dateBucket = gran.bucketStart(new DateTime(k)).getMillis
       val shardLookup = shardLookups.get(dateBucket) match {
         case Some(sl) => sl
         case None => throw new IAE(s"Bad date bucket $dateBucket")
