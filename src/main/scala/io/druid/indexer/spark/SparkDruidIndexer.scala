@@ -32,7 +32,7 @@ import com.google.inject.{Binder, Injector, Key, Module}
 import com.metamx.common.logger.Logger
 import com.metamx.common.{IAE, ISE}
 import io.druid.data.input.impl._
-import io.druid.data.input.{MapBasedInputRow, ProtoBufInputRowParser}
+import io.druid.data.input.MapBasedInputRow
 import io.druid.guice.annotations.{Json, Self}
 import io.druid.guice.{GuiceInjectors, JsonConfigProvider}
 import io.druid.indexer.HadoopyStringInputRowParser
@@ -100,8 +100,6 @@ object SparkDruidIndexer {
         val row = dataSchema.getDelegate.getParser match {
           case x: StringInputRowParser => x.parse(s)
           case x: HadoopyStringInputRowParser => x.parse(s)
-          case x: ProtoBufInputRowParser => throw new
-              UnsupportedOperationException("Cannot use Protobuf for text input")
           case x =>
             logTrace(
               "Could not figure out how to handle class " +
@@ -122,8 +120,6 @@ object SparkDruidIndexer {
           val i = dataSchema.getDelegate.getParser match {
             case x: StringInputRowParser => it.map(x.parse)
             case x: HadoopyStringInputRowParser => it.map(x.parse)
-            case x: ProtoBufInputRowParser => throw new
-                UnsupportedOperationException("Cannot use Protobuf for text input")
             case x =>
               logTrace(
                 "Could not figure out how to handle class " +
