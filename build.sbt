@@ -30,6 +30,13 @@ val hadoop_version = "2.7.3"
 val spark_version = "2.1.0"
 val guava_version = "16.0.1"
 val mesos_version = "0.25.0"
+val parquet_version = "1.8.2"
+
+libraryDependencies += "org.apache.parquet" % "parquet-common" % parquet_version
+libraryDependencies += "org.apache.parquet" % "parquet-encoding" % parquet_version
+libraryDependencies += "org.apache.parquet" % "parquet-column" % parquet_version
+libraryDependencies += "org.apache.parquet" % "parquet-hadoop" % parquet_version
+libraryDependencies += "org.apache.parquet" % "parquet-tools" % parquet_version
 
 val sparkDep = ("org.apache.spark" %% "spark-core" % spark_version
   exclude("org.roaringbitmap", "RoaringBitmap")
@@ -99,6 +106,7 @@ libraryDependencies += "io.druid" % "druid-processing" % druid_version % "provid
 libraryDependencies += "io.druid" % "druid-server" % druid_version % "provided"
 libraryDependencies += "io.druid" % "druid-indexing-service" % druid_version % "provided"
 libraryDependencies += "io.druid" % "druid-indexing-hadoop" % druid_version % "provided"
+
 libraryDependencies +=
   "org.joda" % "joda-convert" % "1.8.1" % "provided" // Prevents intellij silliness and sbt warnings
 libraryDependencies += "com.google.guava" % "guava" % guava_version % "provided"// Prevents serde problems for guice exceptions
@@ -143,7 +151,8 @@ resolvers += "JitPack.IO" at "https://jitpack.io"
 publishMavenStyle := true
 
 //TODO: remove this before moving to druid.io
-publishTo := Some("central-local" at "https://metamx.artifactoryonline.com/metamx/libs-releases-local")
+//publishTo := Some("central-local" at "https://metamx.artifactoryonline.com/metamx/libs-releases-local")
+publishTo := Some(Resolver.file("file",  new File(Path.userHome.absolutePath+"/.m2/repository")))
 pomIncludeRepository := { _ => false }
 
 pomExtra := (

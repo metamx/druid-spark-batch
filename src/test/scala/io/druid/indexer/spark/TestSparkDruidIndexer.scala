@@ -22,15 +22,20 @@ package io.druid.indexer.spark
 import java.io.{Closeable, File}
 import java.nio.file.Files
 import java.util
+
+import com.fasterxml.jackson.core.`type`.TypeReference
 import com.google.common.collect.ImmutableList
 import com.google.common.io.Closer
 import io.druid.data.input.impl.{DimensionsSpec, JSONParseSpec, StringDimensionSchema, TimestampSpec}
 import io.druid.java.util.common.JodaUtils
+import io.druid.indexer.spark.parquet.ParquetInputRowParser
 import io.druid.java.util.common.granularity.Granularities
 import io.druid.java.util.common.logger.Logger
 import io.druid.java.util.common.{CompressionUtils, IAE}
-import io.druid.query.aggregation.LongSumAggregatorFactory
+import io.druid.query.aggregation.{CountAggregator, CountAggregatorFactory, LongSumAggregatorFactory}
 import io.druid.segment.QueryableIndexIndexableAdapter
+import io.druid.segment.indexing.DataSchema
+import io.druid.timeline.DataSegment
 import org.apache.commons.io.FileUtils
 import org.apache.spark.{SparkConf, SparkContext}
 import org.joda.time.{DateTime, Interval}
@@ -436,6 +441,141 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         }
       }
     ) should be(2)
+  }
+
+  it should "return proper DataSegments from parquet" in {
+    val data_files = Seq(this.getClass.getResource("/lineitems.parquet").toString)
+    val closer = Closer.create()
+    val outDir = Files.createTempDirectory("segments").toFile
+    (outDir.mkdirs() || outDir.exists()) && outDir.isDirectory should be(true)
+    closer.register(
+      new Closeable()
+      {
+        override def close(): Unit = FileUtils.deleteDirectory(outDir)
+      }
+    )
+    try {
+      val conf = new SparkConf()
+        .setAppName("Simple Application")
+        .setMaster("local[4]")
+        .set("user.timezone", "UTC")
+        .set("file.encoding", "UTF-8")
+        .set("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager")
+        .set("org.jboss.logging.provider", "slf4j")
+        .set("druid.processing.columnCache.sizeBytes", "1000000000")
+        .set("spark.driver.host", "localhost")
+        .set("spark.executor.userClassPathFirst", "true")
+        .set("spark.driver.userClassPathFirst", "true")
+        .set("spark.kryo.referenceTracking", "false")
+        .registerKryoClasses(SparkBatchIndexTask.getKryoClasses())
+
+      val sc = new SparkContext(conf)
+      closer.register(
+        new Closeable
+        {
+          override def close(): Unit = sc.stop()
+        }
+      )
+      val aggName = "sum_val"
+      val aggregatorFactory = new CountAggregatorFactory(aggName)
+      val parseSpec = new JSONParseSpec(
+        new TimestampSpec("l_shipdate", null, null),
+        new DimensionsSpec(ImmutableList.of(new StringDimensionSchema("l_suppkey")), null, null),
+        null,
+        null
+      )
+
+      val dataSchema = new DataSchema(
+                          dataSource,
+                          objectMapper
+                            .convertValue(new ParquetInputRowParser(parseSpec), new TypeReference[java.util.Map[String, Any]]() {}),
+                          Seq(aggregatorFactory).toArray,
+                          granSpec,
+                          objectMapper)
+      val loadResults = SparkDruidIndexer.loadData(
+        data_files,
+        new SerializedJson(dataSchema),
+        SparkBatchIndexTask.mapToSegmentIntervals(Seq(interval), Granularities.YEAR),
+        rowsPerPartition,
+        rowsPerFlush,
+        outDir.toString,
+        indexSpec,
+        buildV9Directly,
+        sc
+      )
+      loadResults.length should be(7)
+      loadResults(0) match {
+        case segment =>
+          segment.getBinaryVersion should be(9)
+          segment.getDataSource should equal(dataSource)
+          interval.contains(segment.getInterval) should be(true)
+          segment.getInterval.contains(interval) should be(false)
+          segment.getSize should be > 0L
+          segment.getDimensions.asScala.toSet should equal(Set("l_suppkey"))
+          segment.getMetrics.asScala.toSet should equal(Set("sum_val"))
+          val file = new File(segment.getLoadSpec.get("path").toString)
+          file.exists() should be(true)
+          val segDir = Files.createTempDirectory(outDir.toPath, "loadableSegment-%s" format segment.getIdentifier).toFile
+          val copyResult = CompressionUtils.unzip(file, segDir)
+          copyResult.size should be > 0L
+          copyResult.getFiles.asScala.map(_.getName).toSet should equal(
+            Set("00000.smoosh", "meta.smoosh", "version.bin", "factory.json")
+          )
+          val index = StaticIndex.INDEX_IO.loadIndex(segDir)
+          try {
+            val qindex = new QueryableIndexIndexableAdapter(index)
+            qindex.getDimensionNames.asScala.toSet should equal(Set("l_suppkey"))
+            val dimVal = qindex.getDimValueLookup("l_suppkey").asScala
+            dimVal should not be 'Empty
+            dimVal should contain allOf("1883", "1989", "2073")
+            qindex.getMetricNames.asScala.toSet should equal(Set(aggName))
+            qindex.getMetricType(aggName) should equal(aggregatorFactory.getTypeName)
+            qindex.getNumRows should be(11)
+            qindex.getRows.asScala.head.getMetrics()(0) should be(1)
+            index.getDataInterval.getEnd.getMillis should not be JodaUtils.MAX_INSTANT
+          }
+          finally {
+            index.close()
+          }
+      }
+      loadResults(1) match {
+        case segment =>
+          segment.getBinaryVersion should be(9)
+          segment.getDataSource should equal(dataSource)
+          interval.contains(segment.getInterval) should be(true)
+          segment.getInterval.contains(interval) should be(false)
+          segment.getSize should be > 0L
+          segment.getDimensions.asScala.toSet should equal(Set("l_suppkey"))
+          segment.getMetrics.asScala.toSet should equal(Set("sum_val"))
+          val file = new File(segment.getLoadSpec.get("path").toString)
+          file.exists() should be(true)
+          val segDir = Files.createTempDirectory(outDir.toPath, "loadableSegment-%s" format segment.getIdentifier).toFile
+          val copyResult = CompressionUtils.unzip(file, segDir)
+          copyResult.size should be > 0L
+          copyResult.getFiles.asScala.map(_.getName).toSet should equal(
+            Set("00000.smoosh", "meta.smoosh", "version.bin", "factory.json")
+          )
+          val index = StaticIndex.INDEX_IO.loadIndex(segDir)
+          try {
+            val qindex = new QueryableIndexIndexableAdapter(index)
+            qindex.getDimensionNames.asScala.toSet should equal(Set("l_suppkey"))
+            val dimVal = qindex.getDimValueLookup("l_suppkey").asScala
+            dimVal should not be 'Empty
+            dimVal should contain allOf("1807", "2150", "5133", "5405")
+            qindex.getMetricNames.asScala.toSet should equal(Set(aggName))
+            qindex.getMetricType(aggName) should equal(aggregatorFactory.getTypeName)
+            qindex.getNumRows should be(4)
+            qindex.getRows.asScala.head.getMetrics()(0) should be(1)
+            index.getDataInterval.getEnd.getMillis should not be JodaUtils.MAX_INSTANT
+          }
+          finally {
+            index.close()
+          }
+      }
+    }
+    finally {
+      closer.close()
+    }
   }
 }
 

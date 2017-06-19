@@ -61,7 +61,7 @@ object TestScalaBatchIndexTask
   val objectMapper                             = injector.getInstance(classOf[ObjectMapper])
   val taskId                                   = "taskId"
   val dataSource                               = "defaultDataSource"
-  val interval                                 = Interval.parse("1992/1999")
+  val interval                                 = Interval.parse("1992/2019")
   val dataFiles                                = Seq("file:/someFile")
   val parseSpec                                = new DelimitedParseSpec(
     new TimestampSpec("l_shipdate", "yyyy-MM-dd", null),
@@ -114,9 +114,7 @@ object TestScalaBatchIndexTask
         "l_shipmode",
         "l_comment"
       )
-    ),
-    false,
-    0
+    )
   )
   val outPath                                  = "file:/tmp/foo"
   val rowsPerPartition: Long                   = 8139L
