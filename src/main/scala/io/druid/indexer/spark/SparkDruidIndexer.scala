@@ -31,17 +31,17 @@ import com.google.common.io.Closer
 import com.google.inject.{Binder, Injector, Key, Module}
 import com.metamx.common.logger.Logger
 import com.metamx.common.{IAE, ISE}
-import io.druid.data.input.impl._
 import io.druid.data.input.MapBasedInputRow
+import io.druid.data.input.impl._
+import io.druid.guice._
 import io.druid.guice.annotations.{Json, Self}
-import io.druid.guice.{GuiceInjectors, JsonConfigProvider}
 import io.druid.indexer.HadoopyStringInputRowParser
 import io.druid.initialization.Initialization
 import io.druid.java.util.common.granularity.Granularity
 import io.druid.query.aggregation.AggregatorFactory
 import io.druid.segment._
 import io.druid.segment.column.ColumnConfig
-import io.druid.segment.incremental.{IncrementalIndexSchema, OnheapIncrementalIndex}
+import io.druid.segment.incremental.{IncrementalIndex, IncrementalIndexSchema}
 import io.druid.segment.indexing.DataSchema
 import io.druid.segment.loading.DataSegmentPusher
 import io.druid.server.DruidNode
@@ -245,44 +245,44 @@ object SparkDruidIndexer {
             // Fail early if hadoop config is screwed up
             val hadoopConf = hadoopConfig.getDelegate
             val outPath = new Path(outPathString)
-            val hadoopFs = outPath.getFileSystem(hadoopConf)
             val dimSpec = dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec
             val excludedDims = dimSpec.getDimensionExclusions
             val finalDims: Option[util.List[String]] = if (dimSpec.hasCustomDimensions) Some(dimSpec.getDimensionNames.asScala) else None
-            val finalStaticIndexer = if(buildV9Directly) StaticIndex.INDEX_MERGER_V9 else StaticIndex.INDEX_MERGER
+            val finalStaticIndexer = StaticIndex.INDEX_MERGER_V9
 
-            val indices: util.List[IndexableAdapter] = rows.grouped(rowsPerPersist)
-              .map(
-                _.foldLeft(
-                  new OnheapIncrementalIndex(
-                    new IncrementalIndexSchema.Builder()
-                      .withDimensionsSpec(parser)
-                      .withQueryGranularity(
-                        dataSchema.getDelegate
-                          .getGranularitySpec.getQueryGranularity
-                      )
-                      .withMetrics(aggs.map(_.getDelegate))
-                      .withMinTimestamp(timeBucket)
-                      .build(),
-                    true, // Throws exception on parse error
-                    rowsPerPersist
-                  )
-                )(
-                  (index: OnheapIncrementalIndex, r) => {
-                    index.add(
-                      index.formatRow(
-                        new MapBasedInputRow(
-                          r._1._1,
-                          finalDims.getOrElse((r._1._2.keySet() -- excludedDims).toList.asJava),
-                          r._1._2
-                        )
-                      )
+
+            val groupedRows = rows.grouped(rowsPerPersist)
+            val indices: util.List[IndexableAdapter] = groupedRows.map(rs => {
+              // TODO: rewrite this without using IncrementalIndex, because IncrementalIndex bears a lot of overhead
+              // to support concurrent querying, that is not needed in Spark
+              val incrementalIndex = new IncrementalIndex.Builder()
+                .setIndexSchema(
+                  new IncrementalIndexSchema.Builder()
+                    .withDimensionsSpec(parser)
+                    .withQueryGranularity(
+                      dataSchema.getDelegate.getGranularitySpec.getQueryGranularity
                     )
-                    index
-                  }
+                    .withMetrics(aggs.map(_.getDelegate): _*)
+                    .withMinTimestamp(timeBucket)
+                    .build()
                 )
-              ).map(
-              (incIndex: OnheapIncrementalIndex) => {
+                .setReportParseExceptions(true)
+                .setMaxRowCount(rowsPerPersist)
+                .buildOnheap()
+              rs.foreach(r => {
+                incrementalIndex.add(
+                  incrementalIndex.formatRow(
+                    new MapBasedInputRow(
+                      r._1._1,
+                      finalDims.getOrElse((r._1._2.keySet() -- excludedDims).toList.asJava),
+                      r._1._2
+                    )
+                  )
+                )
+              })
+              incrementalIndex
+            }).map(
+              incIndex => {
                 val adapter = new QueryableIndexIndexableAdapter(
                   closer.register(
                     StaticIndex.INDEX_IO.loadIndex(
@@ -296,10 +296,6 @@ object SparkDruidIndexer {
                     )
                   )
                 )
-                // TODO: figure out a guaranteed way to close OnheapIncrementalIndex
-                // without holding a hard reference in closer
-                // It doesn't actually close anything FOR NOW
-                // But will need to close for future proofing
                 incIndex.close()
                 adapter
               }
@@ -696,7 +692,6 @@ object StaticIndex {
   val INDEX_IO = new IndexIO(SerializedJsonStatic.mapper, new ColumnConfig {
     override def columnCacheSizeBytes(): Int = 1000000
   })
-  val INDEX_MERGER = new IndexMerger(SerializedJsonStatic.mapper, INDEX_IO)
 
   val INDEX_MERGER_V9 = new IndexMergerV9(SerializedJsonStatic.mapper, INDEX_IO)
 }
