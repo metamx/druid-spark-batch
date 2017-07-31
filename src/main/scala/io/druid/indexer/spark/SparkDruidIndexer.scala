@@ -22,6 +22,7 @@ package io.druid.indexer.spark
 import java.io._
 import java.nio.file.Files
 import java.util
+
 import com.esotericsoftware.kryo.io.{Input, Output}
 import com.esotericsoftware.kryo.{Kryo, KryoSerializable}
 import com.fasterxml.jackson.core.`type`.TypeReference
@@ -31,18 +32,21 @@ import com.google.inject.name.Names
 import com.google.inject.{Binder, Injector, Key, Module}
 import com.metamx.common.lifecycle.Lifecycle
 import com.metamx.common.logger.Logger
-import com.metamx.common.{Granularity, IAE, ISE}
+import com.metamx.common.{IAE, ISE}
+import io.druid.data.input.MapBasedInputRow
 import com.metamx.emitter.service.ServiceEmitter
 import io.druid.data.input.impl._
-import io.druid.data.input.{MapBasedInputRow, ProtoBufInputRowParser}
+import io.druid.guice._
 import io.druid.guice.annotations.{Json, Self}
+import io.druid.indexer.HadoopyStringInputRowParser
 import io.druid.guice.{GuiceInjectors, JsonConfigProvider}
 import io.druid.indexer.HadoopyStringInputRowParser
 import io.druid.initialization.Initialization
+import io.druid.java.util.common.granularity.Granularity
 import io.druid.query.aggregation.AggregatorFactory
 import io.druid.segment._
 import io.druid.segment.column.ColumnConfig
-import io.druid.segment.incremental.{IncrementalIndexSchema, OnheapIncrementalIndex}
+import io.druid.segment.incremental.{IncrementalIndex, IncrementalIndexSchema}
 import io.druid.segment.indexing.DataSchema
 import io.druid.segment.loading.DataSegmentPusher
 import io.druid.server.DruidNode
@@ -100,8 +104,6 @@ object SparkDruidIndexer {
         val row = dataSchema.getDelegate.getParser match {
           case x: StringInputRowParser => x.parse(s)
           case x: HadoopyStringInputRowParser => x.parse(s)
-          case x: ProtoBufInputRowParser => throw new
-              UnsupportedOperationException("Cannot use Protobuf for text input")
           case x =>
             logTrace(
               "Could not figure out how to handle class " +
@@ -122,8 +124,6 @@ object SparkDruidIndexer {
           val i = dataSchema.getDelegate.getParser match {
             case x: StringInputRowParser => it.map(x.parse)
             case x: HadoopyStringInputRowParser => it.map(x.parse)
-            case x: ProtoBufInputRowParser => throw new
-                UnsupportedOperationException("Cannot use Protobuf for text input")
             case x =>
               logTrace(
                 "Could not figure out how to handle class " +
@@ -136,10 +136,10 @@ object SparkDruidIndexer {
           val segmentGran = dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity
           i.map(
             r => {
-              var k: Long = queryGran.truncate(r.getTimestampFromEpoch)
+              var k: Long = queryGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis
               if (k < 0) {
                 // Example: AllGranularity
-                k = segmentGran.truncate(new DateTime(r.getTimestampFromEpoch)).getMillis
+                k = segmentGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis
               }
               k -> r.asInstanceOf[MapBasedInputRow].getEvent
             }
@@ -169,7 +169,7 @@ object SparkDruidIndexer {
     ).map(
       x => dataSchema.getDelegate.getGranularitySpec
         .getSegmentGranularity
-        .truncate(new DateTime(x._1))
+        .bucketStart(new DateTime(x._1))
         .getMillis -> x._2
     ).reduceByKey(_ + _).collect().toMap
 
@@ -249,44 +249,44 @@ object SparkDruidIndexer {
             // Fail early if hadoop config is screwed up
             val hadoopConf = hadoopConfig.getDelegate
             val outPath = new Path(outPathString)
-            val hadoopFs = outPath.getFileSystem(hadoopConf)
             val dimSpec = dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec
             val excludedDims = dimSpec.getDimensionExclusions
             val finalDims: Option[util.List[String]] = if (dimSpec.hasCustomDimensions) Some(dimSpec.getDimensionNames.asScala) else None
-            val finalStaticIndexer = if(buildV9Directly) StaticIndex.INDEX_MERGER_V9 else StaticIndex.INDEX_MERGER
+            val finalStaticIndexer = StaticIndex.INDEX_MERGER_V9
 
-            val indices: util.List[IndexableAdapter] = rows.grouped(rowsPerPersist)
-              .map(
-                _.foldLeft(
-                  new OnheapIncrementalIndex(
-                    new IncrementalIndexSchema.Builder()
-                      .withDimensionsSpec(parser)
-                      .withQueryGranularity(
-                        dataSchema.getDelegate
-                          .getGranularitySpec.getQueryGranularity
-                      )
-                      .withMetrics(aggs.map(_.getDelegate))
-                      .withMinTimestamp(timeBucket)
-                      .build(),
-                    true, // Throws exception on parse error
-                    rowsPerPersist
-                  )
-                )(
-                  (index: OnheapIncrementalIndex, r) => {
-                    index.add(
-                      index.formatRow(
-                        new MapBasedInputRow(
-                          r._1._1,
-                          finalDims.getOrElse((r._1._2.keySet() -- excludedDims).toList.asJava),
-                          r._1._2
-                        )
-                      )
+
+            val groupedRows = rows.grouped(rowsPerPersist)
+            val indices: util.List[IndexableAdapter] = groupedRows.map(rs => {
+              // TODO: rewrite this without using IncrementalIndex, because IncrementalIndex bears a lot of overhead
+              // to support concurrent querying, that is not needed in Spark
+              val incrementalIndex = new IncrementalIndex.Builder()
+                .setIndexSchema(
+                  new IncrementalIndexSchema.Builder()
+                    .withDimensionsSpec(parser)
+                    .withQueryGranularity(
+                      dataSchema.getDelegate.getGranularitySpec.getQueryGranularity
                     )
-                    index
-                  }
+                    .withMetrics(aggs.map(_.getDelegate): _*)
+                    .withMinTimestamp(timeBucket)
+                    .build()
                 )
-              ).map(
-              (incIndex: OnheapIncrementalIndex) => {
+                .setReportParseExceptions(true)
+                .setMaxRowCount(rowsPerPersist)
+                .buildOnheap()
+              rs.foreach(r => {
+                incrementalIndex.add(
+                  incrementalIndex.formatRow(
+                    new MapBasedInputRow(
+                      r._1._1,
+                      finalDims.getOrElse((r._1._2.keySet() -- excludedDims).toList.asJava),
+                      r._1._2
+                    )
+                  )
+                )
+              })
+              incrementalIndex
+            }).map(
+              incIndex => {
                 val adapter = new QueryableIndexIndexableAdapter(
                   closer.register(
                     StaticIndex.INDEX_IO.loadIndex(
@@ -300,10 +300,6 @@ object SparkDruidIndexer {
                     )
                   )
                 )
-                // TODO: figure out a guaranteed way to close OnheapIncrementalIndex
-                // without holding a hard reference in closer
-                // It doesn't actually close anything FOR NOW
-                // But will need to close for future proofing
                 incIndex.close()
                 adapter
               }
@@ -618,7 +614,7 @@ class SerializedHadoopConfig(delegate: Configuration) extends KryoSerializable w
   }
 }
 
-class DateBucketPartitioner(gran: Granularity, intervals: Iterable[Interval]) extends Partitioner {
+class DateBucketPartitioner(@transient var gran: Granularity, intervals: Iterable[Interval]) extends Partitioner {
   val intervalMap: Map[Long, Int] = intervals
     .map(_.getStart.getMillis)
     .foldLeft(Map[Long, Int]())((a, b) => a + (b -> a.size))
@@ -629,7 +625,7 @@ class DateBucketPartitioner(gran: Granularity, intervals: Iterable[Interval]) ex
     case null => throw new NullPointerException("Bad partition key")
     case (k: Long, v: Any) => getPartition(k)
     case (k: Long) =>
-      val mapKey = gran.bucket(new DateTime(k)).getStart.getMillis
+      val mapKey = gran.bucketStart(new DateTime(k)).getMillis
       val v = intervalMap.get(mapKey)
       if (v.isEmpty) {
         // Lazy ISE creation. getOrElse will create it each time
@@ -640,9 +636,21 @@ class DateBucketPartitioner(gran: Granularity, intervals: Iterable[Interval]) ex
       v.get
     case x => throw new IAE(s"Unknown type for $x")
   }
+
+  @throws(classOf[IOException])
+  private def writeObject(out: ObjectOutputStream): Unit = {
+    out.defaultWriteObject()
+    out.writeObject(new SerializedJson[Granularity](gran))
+  }
+
+  @throws(classOf[IOException])
+  private def readObject(in: ObjectInputStream): Unit = {
+    in.defaultReadObject()
+    gran = in.readObject().asInstanceOf[SerializedJson[Granularity]].delegate
+  }
 }
 
-class DateBucketAndHashPartitioner(gran: Granularity,
+class DateBucketAndHashPartitioner(@transient var gran: Granularity,
                                    partMap: Map[(Long, Long), Int],
                                    optionalDims: Option[Set[String]] = None,
                                    optionalDimExclusions: Option[Set[String]] = None
@@ -669,7 +677,7 @@ class DateBucketAndHashPartitioner(gran: Granularity,
         case x =>
           throw new IAE(s"Unknown value type ${x.getClass} : [$x]")
       }
-      val dateBucket = gran.truncate(new DateTime(k)).getMillis
+      val dateBucket = gran.bucketStart(new DateTime(k)).getMillis
       val shardLookup = shardLookups.get(dateBucket) match {
         case Some(sl) => sl
         case None => throw new IAE(s"Bad date bucket $dateBucket")
@@ -690,13 +698,24 @@ class DateBucketAndHashPartitioner(gran: Granularity,
       }
     case x => throw new IAE(s"Unknown type ${x.getClass} : [$x]")
   }
+
+  @throws(classOf[IOException])
+  private def writeObject(out: ObjectOutputStream): Unit = {
+    out.defaultWriteObject()
+    out.writeObject(new SerializedJson[Granularity](gran))
+  }
+
+  @throws(classOf[IOException])
+  private def readObject(in: ObjectInputStream): Unit = {
+    in.defaultReadObject()
+    gran = in.readObject().asInstanceOf[SerializedJson[Granularity]].delegate
+  }
 }
 
 object StaticIndex {
   val INDEX_IO = new IndexIO(SerializedJsonStatic.mapper, new ColumnConfig {
     override def columnCacheSizeBytes(): Int = 1000000
   })
-  val INDEX_MERGER = new IndexMerger(SerializedJsonStatic.mapper, INDEX_IO)
 
   val INDEX_MERGER_V9 = new IndexMergerV9(SerializedJsonStatic.mapper, INDEX_IO)
 }
