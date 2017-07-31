@@ -41,14 +41,6 @@ import io.druid.segment.IndexSpec
 import io.druid.segment.indexing.DataSchema
 import io.druid.timeline.DataSegment
 import org.apache.spark.{SparkConf, SparkContext}
-import java.io.Closeable
-import java.io.File
-import java.io.IOException
-import java.io.PrintWriter
-import java.nio.file.Files
-import java.util
-import java.util.Objects
-import java.util.Properties
 import org.apache.spark.scheduler.{AccumulableInfo, SparkListener, SparkListenerStageCompleted}
 import org.joda.time.Interval
 

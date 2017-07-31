@@ -19,24 +19,28 @@
 
 package io.druid.indexer.spark
 
-import java.io.{Closeable, File}
-import java.nio.file.Files
-import java.util
-
 import com.google.common.collect.ImmutableList
 import com.google.common.io.Closer
 import com.metamx.common.logger.Logger
-import com.metamx.common.{CompressionUtils, IAE}
-import io.druid.common.utils.JodaUtils
-import io.druid.data.input.impl.{DimensionsSpec, JSONParseSpec, StringDimensionSchema, TimestampSpec}
-import io.druid.java.util.common.granularity.Granularities
-import io.druid.query.aggregation.LongSumAggregatorFactory
-import io.druid.segment.QueryableIndexIndexableAdapter
+import com.metamx.common.CompressionUtils
+import com.metamx.common.IAE
+import _root_.io.druid.common.utils.JodaUtils
+import _root_.io.druid.data.input.impl.DimensionsSpec
+import _root_.io.druid.data.input.impl.JSONParseSpec
+import _root_.io.druid.data.input.impl.StringDimensionSchema
+import _root_.io.druid.data.input.impl.TimestampSpec
+import _root_.io.druid.query.aggregation.LongSumAggregatorFactory
+import _root_.io.druid.segment.QueryableIndexIndexableAdapter
+import java.io.Closeable
+import java.io.File
+import java.nio.file.Files
+import java.util
 import org.apache.commons.io.FileUtils
-import org.apache.spark.{SparkConf, SparkContext}
-import org.joda.time.{DateTime, Interval}
+import org.apache.spark.SparkConf
+import org.apache.spark.SparkContext
+import org.joda.time.DateTime
+import org.joda.time.Interval
 import org.scalatest._
-
 import scala.collection.JavaConverters._
 
 
