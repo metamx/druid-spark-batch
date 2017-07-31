@@ -23,7 +23,6 @@ import java.io.{Closeable, File, IOException, PrintWriter}
 import java.nio.file.Files
 import java.util
 import java.util.{Objects, Properties}
-
 import com.fasterxml.jackson.annotation.{JsonCreator, JsonProperty}
 import com.google.common.base.{Preconditions, Strings}
 import com.google.common.collect.Iterables
@@ -40,10 +39,10 @@ import io.druid.query.aggregation.AggregatorFactory
 import io.druid.segment.IndexSpec
 import io.druid.segment.indexing.DataSchema
 import io.druid.timeline.DataSegment
+import org.apache.spark.scheduler.SparkListenerApplicationEnd
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.scheduler.{AccumulableInfo, SparkListener, SparkListenerStageCompleted}
 import org.joda.time.Interval
-
 import scala.collection.JavaConversions._
 
 @JsonCreator
@@ -376,6 +375,7 @@ object SparkBatchIndexTask
         override def close(): Unit = sc.stop()
       }
     )
+
     try {
 
       val propertyCloser: Closer = Closer.create()
@@ -405,21 +405,20 @@ object SparkBatchIndexTask
 
       lifecycle.start()
 
-      closer.register(
-        new Closeable {
-          override def close(): Unit = lifecycle.stop()
-        }
-      )
-
       sc.addSparkListener(new SparkListener() {
         // Emit metrics at the end of each stage
-        override def onStageCompleted(event: SparkListenerStageCompleted): Unit = {
+        override def onStageCompleted(stageCompleted: SparkListenerStageCompleted): Unit = {
           val dimensions = Map(
             "taskId" -> task.getId,
-            "stageId" -> event.stageInfo.stageId.toString,
+            "stageId" -> stageCompleted.stageInfo.stageId.toString,
             "interval" -> SerializedJsonStatic.mapper.writeValueAsString(task.getIntervals)
           )
-          emitMetrics(event.stageInfo.accumulables.toMap, dimensions, emitter)
+          emitMetrics(stageCompleted.stageInfo.accumulables.toMap, dimensions, emitter)
+        }
+
+        // Closes lifecycle when sc.stop() is called
+        override def onApplicationEnd(applicationEnd: SparkListenerApplicationEnd): Unit = {
+          lifecycle.stop()
         }
       })
 
