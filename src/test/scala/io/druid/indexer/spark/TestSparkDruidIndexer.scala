@@ -22,21 +22,22 @@ package io.druid.indexer.spark
 import java.io.{Closeable, File}
 import java.nio.file.Files
 import java.util
-
 import com.google.common.collect.ImmutableList
 import com.google.common.io.Closer
 import com.metamx.common.logger.Logger
 import com.metamx.common.{CompressionUtils, IAE}
+import com.metamx.emitter.core.HttpPostEmitter
+import com.metamx.emitter.core.NoopEmitter
 import io.druid.common.utils.JodaUtils
 import io.druid.data.input.impl.{DimensionsSpec, JSONParseSpec, StringDimensionSchema, TimestampSpec}
 import io.druid.java.util.common.granularity.Granularities
 import io.druid.query.aggregation.LongSumAggregatorFactory
 import io.druid.segment.QueryableIndexIndexableAdapter
+import java.util.Properties
 import org.apache.commons.io.FileUtils
 import org.apache.spark.{SparkConf, SparkContext}
 import org.joda.time.{DateTime, Interval}
 import org.scalatest._
-
 import scala.collection.JavaConverters._
 
 
@@ -419,6 +420,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
     m.size should equal(1)
     m.get((0L, 0L)) should equal(Some(0L))
   }
+
   it should "properly index skipped intervals" in {
     val map = Map(0L -> 100L, 1L -> 0L, 2L -> 100L)
     val m = SparkDruidIndexer.getSizedPartitionMap(map, 1000)
@@ -426,6 +428,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
     m.get((0L, 0L)) should equal(Some(0L))
     m.get((2L, 0L)) should equal(Some(1L))
   }
+
   "DateBucketAndHashPartitioner" should "handle min value hash" in {
     val partitioner = new
         DateBucketAndHashPartitioner(Granularities.YEAR, Map[(Long, Long), Int]((0L, 0L) -> 1, (0L, 0L) -> 2))

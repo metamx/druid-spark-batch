@@ -23,12 +23,12 @@ import java.io.{Closeable, File, IOException, PrintWriter}
 import java.nio.file.Files
 import java.util
 import java.util.{Objects, Properties}
-
 import com.fasterxml.jackson.annotation.{JsonCreator, JsonProperty}
 import com.google.common.base.{Preconditions, Strings}
 import com.google.common.collect.Iterables
 import com.google.common.io.Closer
 import com.metamx.common.logger.Logger
+import com.metamx.emitter.service.{ServiceEmitter, ServiceMetricEvent}
 import io.druid.common.utils.JodaUtils
 import io.druid.data.input.impl.ParseSpec
 import io.druid.indexing.common.actions.{LockTryAcquireAction, TaskActionClient}
@@ -39,9 +39,10 @@ import io.druid.query.aggregation.AggregatorFactory
 import io.druid.segment.IndexSpec
 import io.druid.segment.indexing.DataSchema
 import io.druid.timeline.DataSegment
+import org.apache.spark.scheduler.SparkListenerApplicationEnd
 import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.scheduler.{AccumulableInfo, SparkListener, SparkListenerStageCompleted}
 import org.joda.time.Interval
-
 import scala.collection.JavaConversions._
 
 @JsonCreator
@@ -250,6 +251,8 @@ object SparkBatchIndexTask
   private val DEFAULT_TARGET_PARTITION_SIZE: Long   = 5000000L
   private val CHILD_PROPERTY_PREFIX        : String = "druid.indexer.fork.property."
   val log            = new Logger(SparkBatchIndexTask.getClass)
+  val lifecycle      = SerializedJsonStatic.lifecycle
+  val emitter        = SerializedJsonStatic.emitter
   val TASK_TYPE_BASE = "index_spark"
 
   def mapToSegmentIntervals(originalIntervals: Iterable[Interval], granularity: Granularity): Iterable[Interval] = {
@@ -372,6 +375,7 @@ object SparkBatchIndexTask
         override def close(): Unit = sc.stop()
       }
     )
+
     try {
 
       val propertyCloser: Closer = Closer.create()
@@ -396,6 +400,27 @@ object SparkBatchIndexTask
           sc.hadoopConfiguration.set(y, System.getProperty(x), "Druid Forking Property")
         }
       )
+
+      log.info("Initializing emitter for metrics")
+
+      lifecycle.start()
+
+      sc.addSparkListener(new SparkListener() {
+        // Emit metrics at the end of each stage
+        override def onStageCompleted(stageCompleted: SparkListenerStageCompleted): Unit = {
+          val dimensions = Map(
+            "taskId" -> task.getId,
+            "stageId" -> stageCompleted.stageInfo.stageId.toString,
+            "interval" -> SerializedJsonStatic.mapper.writeValueAsString(task.getIntervals)
+          )
+          emitMetrics(stageCompleted.stageInfo.accumulables.toMap, dimensions, emitter)
+        }
+
+        // Closes lifecycle when sc.stop() is called
+        override def onApplicationEnd(applicationEnd: SparkListenerApplicationEnd): Unit = {
+          lifecycle.stop()
+        }
+      })
 
       // Should be set by HadoopTask for job jars
       // Hadoop tasks use io.druid.indexer.JobHelper::setupClasspath to replicate their jars.
@@ -441,6 +466,25 @@ object SparkBatchIndexTask
     }
     finally {
       closer.close()
+    }
+  }
+
+  def emitMetrics(accumulables: Map[Long, AccumulableInfo], dims: Map[String, String], emitter: ServiceEmitter) {
+    val accumulatedInfo = accumulables.flatMap {
+      case (_, AccumulableInfo(_, Some(name), _, Some(value: Long), _, _, _)) =>
+        Some(name -> value)
+
+      case _ =>
+        None
+    }
+
+    accumulatedInfo foreach { case (aggName, value) =>
+      log.debug("emitting metric: %s".format(aggName))
+      val eventBuilder = ServiceMetricEvent.builder()
+      dims foreach { case (n, v) => eventBuilder.setDimension(n, v)}
+      emitter.emit(
+        eventBuilder.build(aggName, value)
+      )
     }
   }
 }

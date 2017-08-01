@@ -28,13 +28,18 @@ import com.esotericsoftware.kryo.{Kryo, KryoSerializable}
 import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.common.io.Closer
+import com.google.inject.name.Names
 import com.google.inject.{Binder, Injector, Key, Module}
+import com.metamx.common.lifecycle.Lifecycle
 import com.metamx.common.logger.Logger
 import com.metamx.common.{IAE, ISE}
 import io.druid.data.input.MapBasedInputRow
+import com.metamx.emitter.service.ServiceEmitter
 import io.druid.data.input.impl._
 import io.druid.guice._
 import io.druid.guice.annotations.{Json, Self}
+import io.druid.indexer.HadoopyStringInputRowParser
+import io.druid.guice.{GuiceInjectors, JsonConfigProvider}
 import io.druid.indexer.HadoopyStringInputRowParser
 import io.druid.initialization.Initialization
 import io.druid.java.util.common.granularity.Granularity
@@ -54,7 +59,6 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.{Partitioner, SparkContext}
 import org.joda.time.{DateTime, Interval}
-
 import scala.collection.JavaConversions._
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
@@ -415,18 +419,18 @@ object SparkDruidIndexer {
 
 object SerializedJsonStatic {
   val LOG = new Logger("io.druid.indexer.spark.SerializedJsonStatic")
+  val defaultService = "spark-indexer"
+  // default indexing service port
+  val defaultPort = "8090"
   lazy val injector: Injector = {
     try {
       Initialization.makeInjectorWithModules(
         GuiceInjectors.makeStartupInjector(), List[Module](
           new Module {
             override def configure(binder: Binder): Unit = {
-              JsonConfigProvider
-                .bindInstance(
-                  binder,
-                  Key.get(classOf[DruidNode], classOf[Self]),
-                  new DruidNode("spark-indexer", null, null)
-                )
+              binder.bindConstant().annotatedWith(Names.named("serviceName")).to(defaultService)
+              binder.bindConstant().annotatedWith(Names.named("servicePort")).to(defaultPort)
+              JsonConfigProvider.bind(binder, "druid", classOf[DruidNode], classOf[Self])
             }
           }
         )
@@ -449,6 +453,26 @@ object SerializedJsonStatic {
     catch {
       case NonFatal(e) =>
         LOG.error(e, "Error getting object mapper instance")
+        throw e
+    }
+  }
+
+  lazy val lifecycle: Lifecycle = {
+    try {
+      injector.getInstance(classOf[Lifecycle])
+    } catch {
+      case NonFatal(e) =>
+        LOG.error(e, "Error getting life cycle instance")
+        throw e
+    }
+  }
+
+  lazy val emitter: ServiceEmitter = {
+    try {
+      injector.getInstance(classOf[ServiceEmitter])
+    } catch {
+      case NonFatal(e) =>
+        LOG.error(e, "Error getting service emitter instance")
         throw e
     }
   }
