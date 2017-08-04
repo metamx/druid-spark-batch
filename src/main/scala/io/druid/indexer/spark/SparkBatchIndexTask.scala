@@ -413,7 +413,23 @@ object SparkBatchIndexTask
             "stageId" -> stageCompleted.stageInfo.stageId.toString,
             "interval" -> SerializedJsonStatic.mapper.writeValueAsString(task.getIntervals)
           )
-          emitMetrics(stageCompleted.stageInfo.accumulables.toMap, dimensions, emitter)
+
+          val accumulatedInfo = stageCompleted.stageInfo.accumulables.toMap.flatMap {
+            case (_, AccumulableInfo(_, Some(name), _, Some(value: Long), _, _, _)) =>
+              Some(name -> value)
+
+            case _ =>
+              None
+          }
+
+          accumulatedInfo foreach { case (aggName, value) =>
+            log.debug("emitting metric: %s".format(aggName))
+            val eventBuilder = ServiceMetricEvent.builder()
+            dimensions foreach { case (n, v) => eventBuilder.setDimension(n, v)}
+            emitter.emit(
+              eventBuilder.build(aggName, value)
+            )
+          }
         }
 
         // Closes lifecycle when sc.stop() is called
@@ -466,25 +482,6 @@ object SparkBatchIndexTask
     }
     finally {
       closer.close()
-    }
-  }
-
-  def emitMetrics(accumulables: Map[Long, AccumulableInfo], dims: Map[String, String], emitter: ServiceEmitter) {
-    val accumulatedInfo = accumulables.flatMap {
-      case (_, AccumulableInfo(_, Some(name), _, Some(value: Long), _, _, _)) =>
-        Some(name -> value)
-
-      case _ =>
-        None
-    }
-
-    accumulatedInfo foreach { case (aggName, value) =>
-      log.debug("emitting metric: %s".format(aggName))
-      val eventBuilder = ServiceMetricEvent.builder()
-      dims foreach { case (n, v) => eventBuilder.setDimension(n, v)}
-      emitter.emit(
-        eventBuilder.build(aggName, value)
-      )
     }
   }
 }
