@@ -79,10 +79,9 @@ object SparkDruidIndexer {
     val dataSource = dataSchema.getDelegate.getDataSource
     val lifecycle      = SerializedJsonStatic.lifecycle
     val emitter        = SerializedJsonStatic.emitter
+
     logInfo("Initializing emitter for metrics")
-
     lifecycle.start()
-
     sc.addSparkListener(new SparkListener() {
       // Emit metrics at the end of each stage
       override def onStageCompleted(stageCompleted: SparkListenerStageCompleted): Unit = {
@@ -92,15 +91,12 @@ object SparkDruidIndexer {
           "stageId" -> stageCompleted.stageInfo.stageId.toString,
           "intervals" -> ingestIntervals.mkString("[",",","]")
         )
-
         val accumulatedInfo = stageCompleted.stageInfo.accumulables.toMap.flatMap {
           case (_, AccumulableInfo(_, Some(name), _, Some(value: Long), _, _, _)) =>
             Some(name -> value)
-
           case _ =>
             None
         }
-
         accumulatedInfo foreach { case (aggName, value) =>
           logDebug("emitting metric: %s".format(aggName))
           val eventBuilder = ServiceMetricEvent.builder()
