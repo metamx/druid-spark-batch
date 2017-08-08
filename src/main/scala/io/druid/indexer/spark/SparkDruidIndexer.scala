@@ -23,23 +23,10 @@ import java.io._
 import java.nio.file.Files
 import java.util
 
-import com.esotericsoftware.kryo.io.{Input, Output}
-import com.esotericsoftware.kryo.{Kryo, KryoSerializable}
-import com.fasterxml.jackson.core.`type`.TypeReference
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.google.common.io.Closer
-import com.google.inject.name.Names
-import com.google.inject.{Binder, Injector, Key, Module}
-import com.metamx.common.lifecycle.Lifecycle
-import com.metamx.common.logger.Logger
-import com.metamx.common.{IAE, ISE}
 import io.druid.data.input.MapBasedInputRow
-import com.metamx.emitter.service.ServiceEmitter
 import io.druid.data.input.impl._
-import io.druid.guice._
-import io.druid.guice.annotations.{Json, Self}
-import io.druid.indexer.HadoopyStringInputRowParser
 import io.druid.guice.{GuiceInjectors, JsonConfigProvider}
+import io.druid.guice.annotations.{Json, Self}
 import io.druid.indexer.HadoopyStringInputRowParser
 import io.druid.initialization.Initialization
 import io.druid.java.util.common.granularity.Granularity
@@ -52,13 +39,26 @@ import io.druid.segment.loading.DataSegmentPusher
 import io.druid.server.DruidNode
 import io.druid.timeline.DataSegment
 import io.druid.timeline.partition.{HashBasedNumberedShardSpec, NoneShardSpec, ShardSpec}
+import com.esotericsoftware.kryo.{Kryo, KryoSerializable}
+import com.esotericsoftware.kryo.io.{Input, Output}
+import com.fasterxml.jackson.core.`type`.TypeReference
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.google.common.io.Closer
+import com.google.inject.{Binder, Injector, Key, Module}
+import com.google.inject.name.Names
+import com.metamx.common.{IAE, ISE}
+import com.metamx.common.lifecycle.Lifecycle
+import com.metamx.common.logger.Logger
+import com.metamx.emitter.service.{ServiceEmitter, ServiceMetricEvent}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-import org.apache.spark.rdd.RDD
-import org.apache.spark.storage.StorageLevel
 import org.apache.spark.{Partitioner, SparkContext}
+import org.apache.spark.rdd.RDD
+import org.apache.spark.scheduler.{AccumulableInfo, SparkListener, SparkListenerApplicationEnd, SparkListenerStageCompleted}
+import org.apache.spark.storage.StorageLevel
 import org.joda.time.{DateTime, Interval}
+
 import scala.collection.JavaConversions._
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
@@ -77,6 +77,41 @@ object SparkDruidIndexer {
                 sc: SparkContext
               ): Seq[DataSegment] = {
     val dataSource = dataSchema.getDelegate.getDataSource
+    val lifecycle      = SerializedJsonStatic.lifecycle
+    val emitter        = SerializedJsonStatic.emitter
+
+    logInfo("Initializing emitter for metrics")
+    lifecycle.start()
+    sc.addSparkListener(new SparkListener() {
+      // Emit metrics at the end of each stage
+      override def onStageCompleted(stageCompleted: SparkListenerStageCompleted): Unit = {
+        val dimensions = Map(
+          "appId" -> sc.applicationId,
+          "dataSource" -> dataSource,
+          "stageId" -> stageCompleted.stageInfo.stageId.toString,
+          "intervals" -> ingestIntervals.mkString("[",",","]")
+        )
+        val accumulatedInfo = stageCompleted.stageInfo.accumulables.toMap.flatMap {
+          case (_, AccumulableInfo(_, Some(name), _, Some(value: Long), _, _, _)) =>
+            Some(name -> value)
+          case _ =>
+            None
+        }
+        accumulatedInfo foreach { case (aggName, value) =>
+          logDebug("emitting metric: %s".format(aggName))
+          val eventBuilder = ServiceMetricEvent.builder()
+          dimensions foreach { case (n, v) => eventBuilder.setDimension(n, v)}
+          emitter.emit(
+            eventBuilder.build(aggName, value)
+          )
+        }
+      }
+      // Closes lifecycle when sc.stop() is called
+      override def onApplicationEnd(applicationEnd: SparkListenerApplicationEnd): Unit = {
+        lifecycle.stop()
+      }
+    })
+
     logInfo(s"Launching Spark task with jar version [${getClass.getPackage.getImplementationVersion}]")
     val dataSegmentVersion = DateTime.now().toString
     val hadoopConfig = new SerializedHadoopConfig(sc.hadoopConfiguration)
