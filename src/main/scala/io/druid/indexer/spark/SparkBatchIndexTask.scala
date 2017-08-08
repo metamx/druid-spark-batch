@@ -19,37 +19,29 @@
 
 package io.druid.indexer.spark
 
-import com.fasterxml.jackson.annotation.JsonCreator
-import com.fasterxml.jackson.annotation.JsonProperty
-import com.google.common.base.Preconditions
-import com.google.common.base.Strings
+import java.io.{Closeable, File, IOException, PrintWriter}
+import java.nio.file.Files
+import java.util
+import java.util.{Objects, Properties}
+
+import com.fasterxml.jackson.annotation.{JsonCreator, JsonProperty}
+import com.google.common.base.{Preconditions, Strings}
 import com.google.common.collect.Iterables
 import com.google.common.io.Closer
 import com.metamx.common.logger.Logger
 import io.druid.common.utils.JodaUtils
 import io.druid.data.input.impl.ParseSpec
-import io.druid.indexing.common.actions.LockTryAcquireAction
-import io.druid.indexing.common.actions.TaskActionClient
-import io.druid.indexing.common.task.AbstractTask
-import io.druid.indexing.common.task.HadoopTask
-import io.druid.indexing.common.TaskStatus
-import io.druid.indexing.common.TaskToolbox
+import io.druid.indexing.common.{TaskStatus, TaskToolbox}
+import io.druid.indexing.common.actions.{LockTryAcquireAction, TaskActionClient}
+import io.druid.indexing.common.task.{AbstractTask, HadoopTask}
 import io.druid.java.util.common.granularity._
 import io.druid.query.aggregation.AggregatorFactory
 import io.druid.segment.IndexSpec
 import io.druid.segment.indexing.DataSchema
 import io.druid.timeline.DataSegment
-import java.io.Closeable
-import java.io.File
-impgitort java.io.IOException
-import java.io.PrintWriter
-import java.nio.file.Files
-import java.util
-import java.util.Objects
-import java.util.Properties
-import org.apache.spark.SparkConf
-import org.apache.spark.SparkContext
+import org.apache.spark.{SparkConf, SparkContext}
 import org.joda.time.Interval
+
 import scala.collection.JavaConversions._
 
 @JsonCreator

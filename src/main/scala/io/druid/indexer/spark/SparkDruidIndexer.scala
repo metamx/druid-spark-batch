@@ -19,61 +19,46 @@
 
 package io.druid.indexer.spark
 
-import com.esotericsoftware.kryo.io.Input
-import com.esotericsoftware.kryo.io.Output
-import com.esotericsoftware.kryo.Kryo
-import com.esotericsoftware.kryo.KryoSerializable
-import com.fasterxml.jackson.core.`type`.TypeReference
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.google.common.io.Closer
-import com.google.inject.name.Names
-import com.google.inject.Binder
-import com.google.inject.Injector
-import com.google.inject.Key
-import com.google.inject.Module
-import com.metamx.common.lifecycle.Lifecycle
-import com.metamx.common.logger.Logger
-import com.metamx.common.IAE
-import com.metamx.common.ISE
-import com.metamx.emitter.service.ServiceEmitter
-import com.metamx.emitter.service.ServiceMetricEvent
-import _root_.io.druid.data.input.MapBasedInputRow
-import _root_.io.druid.data.input.impl._
-import _root_.io.druid.guice.annotations.Json
-import _root_.io.druid.guice.annotations.Self
-import _root_.io.druid.guice.GuiceInjectors
-import _root_.io.druid.guice.JsonConfigProvider
-import _root_.io.druid.indexer.HadoopyStringInputRowParser
-import _root_.io.druid.initialization.Initialization
-import _root_.io.druid.java.util.common.granularity.Granularity
-import _root_.io.druid.query.aggregation.AggregatorFactory
-import _root_.io.druid.segment._
-import _root_.io.druid.segment.column.ColumnConfig
-import _root_.io.druid.segment.incremental.IncrementalIndex
-import _root_.io.druid.segment.incremental.IncrementalIndexSchema
-import _root_.io.druid.segment.indexing.DataSchema
-import _root_.io.druid.segment.loading.DataSegmentPusher
-import _root_.io.druid.server.DruidNode
-import _root_.io.druid.timeline.DataSegment
-import _root_.io.druid.timeline.partition.HashBasedNumberedShardSpec
-import _root_.io.druid.timeline.partition.NoneShardSpec
-import _root_.io.druid.timeline.partition.ShardSpec
 import java.io._
 import java.nio.file.Files
 import java.util
+
+import io.druid.data.input.MapBasedInputRow
+import io.druid.data.input.impl._
+import io.druid.guice.{GuiceInjectors, JsonConfigProvider}
+import io.druid.guice.annotations.{Json, Self}
+import io.druid.indexer.HadoopyStringInputRowParser
+import io.druid.initialization.Initialization
+import io.druid.java.util.common.granularity.Granularity
+import io.druid.query.aggregation.AggregatorFactory
+import io.druid.segment._
+import io.druid.segment.column.ColumnConfig
+import io.druid.segment.incremental.{IncrementalIndex, IncrementalIndexSchema}
+import io.druid.segment.indexing.DataSchema
+import io.druid.segment.loading.DataSegmentPusher
+import io.druid.server.DruidNode
+import io.druid.timeline.DataSegment
+import io.druid.timeline.partition.{HashBasedNumberedShardSpec, NoneShardSpec, ShardSpec}
+import com.esotericsoftware.kryo.{Kryo, KryoSerializable}
+import com.esotericsoftware.kryo.io.{Input, Output}
+import com.fasterxml.jackson.core.`type`.TypeReference
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.google.common.io.Closer
+import com.google.inject.{Binder, Injector, Key, Module}
+import com.google.inject.name.Names
+import com.metamx.common.{IAE, ISE}
+import com.metamx.common.lifecycle.Lifecycle
+import com.metamx.common.logger.Logger
+import com.metamx.emitter.service.{ServiceEmitter, ServiceMetricEvent}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import org.apache.spark.{Partitioner, SparkContext}
 import org.apache.spark.rdd.RDD
-import org.apache.spark.scheduler.AccumulableInfo
-import org.apache.spark.scheduler.SparkListener
-import org.apache.spark.scheduler.SparkListenerApplicationEnd
-import org.apache.spark.scheduler.SparkListenerStageCompleted
+import org.apache.spark.scheduler.{AccumulableInfo, SparkListener, SparkListenerApplicationEnd, SparkListenerStageCompleted}
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.Partitioner
-import org.apache.spark.SparkContext
-import org.joda.time.DateTime
-import org.joda.time.Interval
+import org.joda.time.{DateTime, Interval}
+
 import scala.collection.JavaConversions._
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
