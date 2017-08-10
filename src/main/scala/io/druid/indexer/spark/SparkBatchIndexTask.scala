@@ -28,13 +28,13 @@ import com.fasterxml.jackson.annotation.{JsonCreator, JsonProperty}
 import com.google.common.base.{Preconditions, Strings}
 import com.google.common.collect.Iterables
 import com.google.common.io.Closer
-import com.metamx.common.logger.Logger
 import io.druid.common.utils.JodaUtils
 import io.druid.data.input.impl.ParseSpec
 import io.druid.indexing.common.{TaskStatus, TaskToolbox}
 import io.druid.indexing.common.actions.{LockTryAcquireAction, TaskActionClient}
 import io.druid.indexing.common.task.{AbstractTask, HadoopTask}
 import io.druid.java.util.common.granularity._
+import io.druid.java.util.common.logger.Logger
 import io.druid.query.aggregation.AggregatorFactory
 import io.druid.segment.IndexSpec
 import io.druid.segment.indexing.DataSchema

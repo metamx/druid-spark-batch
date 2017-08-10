@@ -30,8 +30,6 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.common.io.Closer
 import com.google.inject.name.Names
 import com.google.inject.{Binder, Injector, Key, Module}
-import com.metamx.common.logger.Logger
-import com.metamx.common.{IAE, ISE}
 import com.metamx.emitter.service.{ServiceEmitter, ServiceMetricEvent}
 import io.druid.data.input.MapBasedInputRow
 import io.druid.data.input.impl._
@@ -39,8 +37,10 @@ import io.druid.guice.annotations.{Json, Self}
 import io.druid.guice.{GuiceInjectors, JsonConfigProvider}
 import io.druid.indexer.HadoopyStringInputRowParser
 import io.druid.initialization.Initialization
+import io.druid.java.util.common.{IAE, ISE}
 import io.druid.java.util.common.granularity.Granularity
 import io.druid.java.util.common.lifecycle.Lifecycle
+import io.druid.java.util.common.logger.Logger
 import io.druid.query.aggregation.AggregatorFactory
 import io.druid.segment._
 import io.druid.segment.column.ColumnConfig
