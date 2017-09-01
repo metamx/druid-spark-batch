@@ -20,7 +20,6 @@
 package io.druid.indexer.spark
 
 import java.util.{Collections, Properties}
-
 import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.inject.{Binder, Module}
@@ -35,13 +34,12 @@ import io.druid.query.aggregation.CountAggregatorFactory
 import io.druid.query.aggregation.DoubleSumAggregatorFactory
 import io.druid.query.aggregation.LongSumAggregatorFactory
 import io.druid.segment.IndexSpec
-import io.druid.segment.data.CompressionStrategy
+import io.druid.segment.data.CompressedObjectStrategy.CompressionStrategy
 import io.druid.segment.data.RoaringBitmapSerdeFactory
 import io.druid.segment.indexing.DataSchema
 import io.druid.segment.indexing.granularity.{GranularitySpec, UniformGranularitySpec}
 import org.joda.time.Interval
 import org.scalatest.{FlatSpec, Matchers}
-
 import scala.collection.JavaConversions._
 import scala.collection.JavaConverters._
 
@@ -55,6 +53,7 @@ object TestScalaBatchIndexTask
           override def configure(binder: Binder): Unit = {
             binder.bindConstant.annotatedWith(Names.named("serviceName")).to("druid/test")
             binder.bindConstant.annotatedWith(Names.named("servicePort")).to(0)
+            binder.bindConstant.annotatedWith(Names.named("tlsServicePort")).to(0)
           }
         }
       )

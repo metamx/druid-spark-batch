@@ -28,7 +28,7 @@ import com.fasterxml.jackson.annotation.{JsonCreator, JsonProperty}
 import com.google.common.base.{Preconditions, Strings}
 import com.google.common.collect.Iterables
 import com.google.common.io.Closer
-import io.druid.common.utils.JodaUtils
+import io.druid.java.util.common.JodaUtils
 import io.druid.data.input.impl.ParseSpec
 import io.druid.indexing.common.{TaskStatus, TaskToolbox}
 import io.druid.indexing.common.actions.{LockTryAcquireAction, TaskActionClient}

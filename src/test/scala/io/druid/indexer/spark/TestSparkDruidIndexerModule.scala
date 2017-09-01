@@ -28,6 +28,7 @@ import io.druid.guice.annotations.Self
 import io.druid.initialization.DruidModule
 import io.druid.initialization.Initialization
 import io.druid.server.DruidNode
+import io.druid.server.initialization.ServerConfig
 import java.util.ServiceLoader
 import org.scalatest.FlatSpec
 import org.scalatest.Matchers
@@ -48,7 +49,7 @@ class TestSparkDruidIndexerModule extends FlatSpec with Matchers
               .bindInstance(
                 binder,
                 Key.get(classOf[DruidNode], classOf[Self]),
-                new DruidNode("spark-indexer-test", null, null)
+                new DruidNode("spark-indexer-test", null, null, null, new ServerConfig)
               )
           }
         },
