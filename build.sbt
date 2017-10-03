@@ -36,7 +36,6 @@ libraryDependencies += "org.apache.parquet" % "parquet-common" % parquet_version
 libraryDependencies += "org.apache.parquet" % "parquet-encoding" % parquet_version
 libraryDependencies += "org.apache.parquet" % "parquet-column" % parquet_version
 libraryDependencies += "org.apache.parquet" % "parquet-hadoop" % parquet_version
-libraryDependencies += "org.apache.parquet" % "parquet-tools" % parquet_version
 
 val sparkDep = ("org.apache.spark" %% "spark-core" % spark_version
   exclude("org.roaringbitmap", "RoaringBitmap")
@@ -172,5 +171,5 @@ pomExtra := (
 
 testOptions += Tests.Argument(TestFrameworks.JUnit, "-Duser.timezone=UTC")
 // WTF SBT?
-javaOptions in Test += "-Duser.timezone=UTC"
+javaOptions in Test +=  "-Duser.timezone=UTC"
 fork in Test := true
