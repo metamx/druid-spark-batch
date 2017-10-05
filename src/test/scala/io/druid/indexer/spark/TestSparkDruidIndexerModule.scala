@@ -22,6 +22,7 @@ package io.druid.indexer.spark
 import com.google.inject.Binder
 import com.google.inject.Key
 import com.google.inject.Module
+import com.google.inject.name.Names
 import io.druid.guice.GuiceInjectors
 import io.druid.guice.JsonConfigProvider
 import io.druid.guice.annotations.Self
@@ -48,8 +49,10 @@ class TestSparkDruidIndexerModule extends FlatSpec with Matchers
               .bindInstance(
                 binder,
                 Key.get(classOf[DruidNode], classOf[Self]),
-                new DruidNode("spark-indexer-test", null, null)
+                new DruidNode("spark-indexer-test", null, null, null, true, false)
               )
+            binder.bindConstant.annotatedWith(Names.named("servicePort")).to(0)
+            binder.bindConstant.annotatedWith(Names.named("tlsServicePort")).to(-1)
           }
         },
         module

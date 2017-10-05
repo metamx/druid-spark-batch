@@ -22,11 +22,10 @@ package io.druid.indexer.spark
 import java.io.{Closeable, File}
 import java.nio.file.Files
 import java.util
-
 import com.google.common.collect.ImmutableList
 import com.google.common.io.Closer
-import io.druid.common.utils.JodaUtils
 import io.druid.data.input.impl.{DimensionsSpec, JSONParseSpec, StringDimensionSchema, TimestampSpec}
+import io.druid.java.util.common.JodaUtils
 import io.druid.java.util.common.granularity.Granularities
 import io.druid.java.util.common.logger.Logger
 import io.druid.java.util.common.{CompressionUtils, IAE}
@@ -36,7 +35,6 @@ import org.apache.commons.io.FileUtils
 import org.apache.spark.{SparkConf, SparkContext}
 import org.joda.time.{DateTime, Interval}
 import org.scalatest._
-
 import scala.collection.JavaConverters._
 
 

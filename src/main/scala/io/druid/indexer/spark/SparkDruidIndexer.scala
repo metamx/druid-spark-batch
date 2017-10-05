@@ -81,7 +81,6 @@ object SparkDruidIndexer {
     val emitter        = SerializedJsonStatic.emitter
 
     logInfo("Initializing emitter for metrics")
-    lifecycle.start()
     sc.addSparkListener(new SparkListener() {
       // Emit metrics at the end of each stage
       override def onStageCompleted(stageCompleted: SparkListenerStageCompleted): Unit = {
@@ -457,6 +456,7 @@ object SerializedJsonStatic {
   val defaultService = "spark-indexer"
   // default indexing service port
   val defaultPort = "8090"
+  val defaultTlsPort = "8290"
   lazy val injector: Injector = {
     try {
       Initialization.makeInjectorWithModules(
@@ -465,6 +465,7 @@ object SerializedJsonStatic {
             override def configure(binder: Binder): Unit = {
               binder.bindConstant().annotatedWith(Names.named("serviceName")).to(defaultService)
               binder.bindConstant().annotatedWith(Names.named("servicePort")).to(defaultPort)
+              binder.bindConstant().annotatedWith(Names.named("tlsServicePort")).to(defaultTlsPort)
               JsonConfigProvider.bind(binder, "druid", classOf[DruidNode], classOf[Self])
             }
           }
