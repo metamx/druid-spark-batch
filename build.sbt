@@ -24,7 +24,7 @@ homepage := Some(url("https://github.com/metamx/druid-spark-batch"))
 crossScalaVersions := Seq("2.11.7", "2.10.6")
 releaseIgnoreUntrackedFiles := true
 
-val druid_version = "0.11.0"
+val druid_version = "0.11.1-SNAPSHOT"
 // This is just used here for Path, so anything that doesn't break spark should be fine
 val hadoop_version = "2.7.3"
 val spark_version = "2.1.0"
@@ -36,7 +36,7 @@ libraryDependencies += "org.apache.parquet" % "parquet-common" % parquet_version
 libraryDependencies += "org.apache.parquet" % "parquet-encoding" % parquet_version exclude("com.google.guava", "guava")
 libraryDependencies += "org.apache.parquet" % "parquet-column" % parquet_version exclude("com.google.guava", "guava")
 libraryDependencies += "org.apache.parquet" % "parquet-hadoop" % parquet_version exclude("com.google.guava", "guava")
-libraryDependencies += "org.apache.parquet" % "parquet-tools" % parquet_version exclude("com.google.guava", "guava")
+libraryDependencies += "org.apache.parquet" % "parquet-avro" % parquet_version exclude("com.google.guava", "guava")
 
 val sparkDep = ("org.apache.spark" %% "spark-core" % spark_version
   exclude("org.roaringbitmap", "RoaringBitmap")
@@ -106,6 +106,7 @@ libraryDependencies += "io.druid" % "druid-processing" % druid_version % "provid
 libraryDependencies += "io.druid" % "druid-server" % druid_version % "provided"
 libraryDependencies += "io.druid" % "druid-indexing-service" % druid_version % "provided"
 libraryDependencies += "io.druid" % "druid-indexing-hadoop" % druid_version % "provided"
+libraryDependencies += "io.druid.extensions" % "druid-avro-extensions" % druid_version % "provided"
 
 libraryDependencies +=
   "org.joda" % "joda-convert" % "1.8.1" % "provided" // Prevents intellij silliness and sbt warnings

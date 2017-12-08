@@ -48,15 +48,17 @@ import io.druid.segment.column.ColumnConfig
 import io.druid.segment.incremental.{IncrementalIndex, IncrementalIndexSchema}
 import io.druid.segment.indexing.DataSchema
 import io.druid.segment.loading.DataSegmentPusher
+import io.druid.segment.writeout.OffHeapMemorySegmentWriteOutMediumFactory
 import io.druid.server.DruidNode
 import io.druid.timeline.DataSegment
 import io.druid.timeline.partition.{HashBasedNumberedShardSpec, NoneShardSpec, ShardSpec}
+import org.apache.avro.generic.GenericRecord
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapreduce.Job
+import org.apache.parquet.avro.AvroReadSupport
 import org.apache.parquet.hadoop.ParquetInputFormat
-import org.apache.parquet.tools.read.{SimpleReadSupport, SimpleRecord}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.{AccumulableInfo, SparkListener, SparkListenerApplicationEnd, SparkListenerStageCompleted}
 import org.apache.spark.storage.StorageLevel
@@ -140,9 +142,9 @@ object SparkDruidIndexer {
       dataSchema.getDelegate.getParser match {
         case x: ParquetInputRowParser =>
           val job = new Job()
-          ParquetInputFormat.setReadSupportClass(job, classOf[SimpleReadSupport])
-          sc.newAPIHadoopFile(dataFiles.mkString(","), classOf[ParquetInputFormat[SimpleRecord]],
-            classOf[Void], classOf[SimpleRecord], job.getConfiguration).values.filter(
+          ParquetInputFormat.setReadSupportClass(job, classOf[AvroReadSupport[GenericRecord]])
+          sc.newAPIHadoopFile(dataFiles.mkString(","), classOf[ParquetInputFormat[GenericRecord]],
+            classOf[Void], classOf[GenericRecord], job.getConfiguration).values.filter(
               s => {
                 val row = dataSchema.getDelegate.getParser match {
                   case x: ParquetInputRowParser => x.parse(s)
@@ -373,6 +375,27 @@ object SparkDruidIndexer {
               incrementalIndex
             }).map(
               incIndex => {
+                val progressIndicator = new ProgressIndicator {
+                  override def stop(): Unit = {
+                    logTrace("Stop")
+                  }
+
+                  override def stopSection(s: String): Unit = {
+                    logTrace(s"Stop [$s]")
+                  }
+
+                  override def progress(): Unit = {
+                    logTrace("Progress")
+                  }
+
+                  override def startSection(s: String): Unit = {
+                    logTrace(s"Start [$s]")
+                  }
+
+                  override def start(): Unit = {
+                    logTrace("Start")
+                  }
+                }
                 val adapter = new QueryableIndexIndexableAdapter(
                   closer.register(
                     StaticIndex.INDEX_IO.loadIndex(
@@ -381,7 +404,9 @@ object SparkDruidIndexer {
                           incIndex,
                           timeInterval,
                           tmpPersistDir,
-                          indexSpec_passable.getDelegate
+                          indexSpec_passable.getDelegate,
+                          progressIndicator,
+                          OffHeapMemorySegmentWriteOutMediumFactory.instance()
                         )
                     )
                   )
@@ -390,37 +415,13 @@ object SparkDruidIndexer {
                 adapter
               }
             ).toList
+
             val file = finalStaticIndexer.merge(
               indices,
               true,
               aggs.map(_.getDelegate),
               tmpMergeDir,
-              indexSpec_passable.getDelegate,
-              new ProgressIndicator {
-                override def stop(): Unit = {
-                  logTrace("Stop")
-                }
-
-                override def stopSection(s: String): Unit = {
-                  logTrace(s"Stop [$s]")
-                }
-
-                override def progress(): Unit = {
-                  logTrace("Progress")
-                }
-
-                override def startSection(s: String): Unit = {
-                  logTrace(s"Start [$s]")
-                }
-
-                override def progressSection(s: String, s1: String): Unit = {
-                  logTrace(s"Progress [$s]:[$s1]")
-                }
-
-                override def start(): Unit = {
-                  logTrace("Start")
-                }
-              }
+              indexSpec_passable.getDelegate
             )
             val allDimensions: util.List[String] = indices
               .map(_.getDimensionNames)
@@ -801,9 +802,12 @@ class DateBucketAndHashPartitioner(@transient var gran: Granularity,
 }
 
 object StaticIndex {
-  val INDEX_IO = new IndexIO(SerializedJsonStatic.mapper, new ColumnConfig {
+  val INDEX_IO = new IndexIO(
+    SerializedJsonStatic.mapper,
+    OffHeapMemorySegmentWriteOutMediumFactory.instance(),
+    new ColumnConfig {
     override def columnCacheSizeBytes(): Int = 1000000
   })
 
-  val INDEX_MERGER_V9 = new IndexMergerV9(SerializedJsonStatic.mapper, INDEX_IO)
+  val INDEX_MERGER_V9 = new IndexMergerV9(SerializedJsonStatic.mapper, INDEX_IO, OffHeapMemorySegmentWriteOutMediumFactory.instance())
 }
