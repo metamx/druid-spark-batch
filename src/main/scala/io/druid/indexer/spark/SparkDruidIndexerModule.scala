@@ -25,6 +25,9 @@ import com.fasterxml.jackson.databind.module.SimpleModule
 import com.google.inject.Binder
 import io.druid.initialization.DruidModule
 import java.util
+
+import io.druid.indexer.spark.parquet.ParquetInputRowParser
+
 import scala.collection.JavaConverters._
 
 class SparkDruidIndexerModule extends DruidModule
@@ -32,6 +35,9 @@ class SparkDruidIndexerModule extends DruidModule
   override def getJacksonModules: util.List[_ <: Module] = {
     List(
       new SimpleModule("SparkDruidIndexer")
+        .registerSubtypes(
+          new NamedType(classOf[ParquetInputRowParser], "parquet")
+        )
         .registerSubtypes(
           new NamedType(classOf[SparkBatchIndexTask], "index_spark")
         )

@@ -20,6 +20,7 @@
 package io.druid.indexer.spark
 
 import java.util.{Collections, Properties}
+
 import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.inject.{Binder, Module}
@@ -40,6 +41,7 @@ import io.druid.segment.indexing.DataSchema
 import io.druid.segment.indexing.granularity.{GranularitySpec, UniformGranularitySpec}
 import org.joda.time.Interval
 import org.scalatest.{FlatSpec, Matchers}
+
 import scala.collection.JavaConversions._
 import scala.collection.JavaConverters._
 
@@ -114,9 +116,7 @@ object TestScalaBatchIndexTask
         "l_shipmode",
         "l_comment"
       )
-    ),
-    false,
-    0
+    )
   )
   val outPath                                  = "file:/tmp/foo"
   val rowsPerPartition: Long                   = 8139L

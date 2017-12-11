@@ -36,6 +36,7 @@ import io.druid.data.input.impl._
 import io.druid.guice.annotations.{Json, Self}
 import io.druid.guice.{GuiceInjectors, JsonConfigProvider}
 import io.druid.indexer.HadoopyStringInputRowParser
+import io.druid.indexer.spark.parquet.ParquetInputRowParser
 import io.druid.initialization.Initialization
 import io.druid.java.util.common.{IAE, ISE}
 import io.druid.java.util.common.granularity.Granularity
@@ -50,13 +51,17 @@ import io.druid.segment.loading.DataSegmentPusher
 import io.druid.server.DruidNode
 import io.druid.timeline.DataSegment
 import io.druid.timeline.partition.{HashBasedNumberedShardSpec, NoneShardSpec, ShardSpec}
+import org.apache.avro.generic.GenericRecord
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import org.apache.hadoop.mapreduce.Job
+import org.apache.parquet.avro.AvroReadSupport
+import org.apache.parquet.hadoop.ParquetInputFormat
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.{AccumulableInfo, SparkListener, SparkListenerApplicationEnd, SparkListenerStageCompleted}
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.{Partitioner, SparkContext}
+import org.apache.spark.{InterruptibleIterator, Partitioner, SparkContext}
 import org.joda.time.{DateTime, Interval}
 
 import scala.collection.JavaConversions._
@@ -130,58 +135,106 @@ object SparkDruidIndexer {
 
     logInfo(s"Splitting [$totalGZSize] gz bytes into [$startingPartitions] partitions")
 
-    // Hadoopify the data so it doesn't look so silly in Spark's DAG
-    val baseData = sc.textFile(dataFiles mkString ",")
-      // Input data is probably in gigantic files, so redistribute
-      .filter(
-      s => {
-        val row = dataSchema.getDelegate.getParser match {
-          case x: StringInputRowParser => x.parse(s)
-          case x: HadoopyStringInputRowParser => x.parse(s)
-          case x =>
-            logTrace(
-              "Could not figure out how to handle class " +
-                s"[${x.getClass.getCanonicalName}]. " +
-                "Hoping it can handle string input"
-            )
-            x.asInstanceOf[InputRowParser[Any]].parse(s)
-        }
-        passableIntervals.exists(_.contains(row.getTimestamp))
-      }
-    )
-      .repartition(startingPartitions)
-      // Persist the strings only rather than the event map
-      // We have to do the parsing twice this way, but serde of the map is killer as well
-      .persist(StorageLevel.DISK_ONLY)
-      .mapPartitions(
-        it => {
-          val i = dataSchema.getDelegate.getParser match {
-            case x: StringInputRowParser => it.map(x.parse)
-            case x: HadoopyStringInputRowParser => it.map(x.parse)
-            case x =>
-              logTrace(
-                "Could not figure out how to handle class " +
-                  s"[${x.getClass.getCanonicalName}]. " +
-                  "Hoping it can handle string input"
-              )
-              it.map(x.asInstanceOf[InputRowParser[Any]].parse)
-          }
-          val queryGran = dataSchema.getDelegate.getGranularitySpec.getQueryGranularity
-          val segmentGran = dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity
-          i.map(
-            r => {
-              var k: Long = queryGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis
-              if (k < 0) {
-                // Example: AllGranularity
-                k = segmentGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis
-              }
-              k -> r.asInstanceOf[MapBasedInputRow].getEvent
-            }
-          )
-        }
-      )
 
-    logInfo("Starting uniqes")
+    // Hadoopify the data so it doesn't look so silly in Spark's DAG
+    val baseData =
+      dataSchema.getDelegate.getParser match {
+        case x: ParquetInputRowParser =>
+          val job = new Job()
+          ParquetInputFormat.setReadSupportClass(job, classOf[AvroReadSupport[GenericRecord]])
+          sc.newAPIHadoopFile(dataFiles.mkString(","), classOf[ParquetInputFormat[GenericRecord]],
+            classOf[Void], classOf[GenericRecord], job.getConfiguration).values.filter(
+              s => {
+                val row = dataSchema.getDelegate.getParser match {
+                  case x: ParquetInputRowParser => x.parse(s)
+                  case x =>
+                    logTrace(
+                      "Could not figure out how to handle class " +
+                        s"[${x.getClass.getCanonicalName}]. " +
+                        "Hoping it can handle string input"
+                    )
+                    x.asInstanceOf[InputRowParser[Any]].parse(s)
+                }
+                passableIntervals.exists(_.contains(row.getTimestamp))
+            }).repartition(startingPartitions)
+            // Persist the strings only rather than the event map
+            // We have to do the parsing twice this way, but serde of the map is killer as well
+            .persist(StorageLevel.DISK_ONLY)
+            .mapPartitions(
+              it => {
+                val i = dataSchema.getDelegate.getParser match {
+                  case x: ParquetInputRowParser => it.map(x.parse)
+                  case x =>
+                    logTrace(
+                      "Could not figure out how to handle class " +
+                        s"[${x.getClass.getCanonicalName}]. " +
+                        "Hoping it can handle string input"
+                    )
+                    it.map(x.asInstanceOf[InputRowParser[Any]].parse)
+                }
+                val queryGran = dataSchema.getDelegate.getGranularitySpec.getQueryGranularity
+                val segmentGran = dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity
+                i.map(
+                  r => {
+                    var k: Long = queryGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis
+                    if (k < 0) {
+                      // Example: AllGranularity
+                      k = segmentGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis
+                    }
+                    k -> r.asInstanceOf[MapBasedInputRow].getEvent
+                  }
+                )
+              }
+            )
+        case x =>
+          sc.textFile(dataFiles mkString ",").filter(
+            s => {
+              val row = dataSchema.getDelegate.getParser match {
+                case x: StringInputRowParser => x.parse(s)
+                case x: HadoopyStringInputRowParser => x.parse(s)
+                case x =>
+                  logTrace(
+                    "Could not figure out how to handle class " +
+                      s"[${x.getClass.getCanonicalName}]. " +
+                      "Hoping it can handle string input"
+                  )
+                  x.asInstanceOf[InputRowParser[Any]].parse(s)
+              }
+              passableIntervals.exists(_.contains(row.getTimestamp))
+            }).repartition(startingPartitions)
+              // Persist the strings only rather than the event map
+              // We have to do the parsing twice this way, but serde of the map is killer as well
+              .persist(StorageLevel.DISK_ONLY)
+              .mapPartitions(
+                it => {
+                  val i = dataSchema.getDelegate.getParser match {
+                    case x: StringInputRowParser => it.map(x.parse)
+                    case x: HadoopyStringInputRowParser => it.map(x.parse)
+                    case x =>
+                      logTrace(
+                        "Could not figure out how to handle class " +
+                          s"[${x.getClass.getCanonicalName}]. " +
+                          "Hoping it can handle string input"
+                      )
+                      it.map(x.asInstanceOf[InputRowParser[Any]].parse)
+                  }
+                  val queryGran = dataSchema.getDelegate.getGranularitySpec.getQueryGranularity
+                  val segmentGran = dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity
+                  i.map(
+                    r => {
+                      var k: Long = queryGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis
+                      if (k < 0) {
+                        // Example: AllGranularity
+                        k = segmentGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis
+                      }
+                      k -> r.asInstanceOf[MapBasedInputRow].getEvent
+                    }
+                  )
+                }
+              )
+      }
+
+    logInfo("Starting uniques")
     val optionalDims: Option[Set[String]] = if (dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec.hasCustomDimensions) {
       val parseSpec = dataSchema.getDelegate.getParser.getParseSpec
       Some(parseSpec.getDimensionsSpec.getDimensionNames.asScala.toSet)
@@ -338,6 +391,7 @@ object SparkDruidIndexer {
                 adapter
               }
             ).toList
+
             val file = finalStaticIndexer.merge(
               indices,
               true,
@@ -361,12 +415,12 @@ object SparkDruidIndexer {
                   logTrace(s"Start [$s]")
                 }
 
-                override def progressSection(s: String, s1: String): Unit = {
-                  logTrace(s"Progress [$s]:[$s1]")
-                }
-
                 override def start(): Unit = {
                   logTrace("Start")
+                }
+
+                override def progressSection(s: String, s1: String):Unit = {
+                  logTrace(s"Progress Section [$s] [$s1]")
                 }
               }
             )
@@ -749,7 +803,9 @@ class DateBucketAndHashPartitioner(@transient var gran: Granularity,
 }
 
 object StaticIndex {
-  val INDEX_IO = new IndexIO(SerializedJsonStatic.mapper, new ColumnConfig {
+  val INDEX_IO = new IndexIO(
+    SerializedJsonStatic.mapper,
+    new ColumnConfig {
     override def columnCacheSizeBytes(): Int = 1000000
   })
 
