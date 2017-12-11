@@ -105,7 +105,7 @@ if [[ $submissionSuccess ]]; then
     echo "$taskMessage"
     DURATION=$SECONDS
     curl -s https://metrics-api.librato.com/v1/metrics -u $LIBRATO_USERNAME:$LIBRATO_TOKEN -H 'Content-Type: application/json' \
-      -d "{\"gauges\":{\"jenkins.spark_jobs.$SPARK_APP_NAME.duration.s\":{\"value\":$DURATION,\"source\":\"jenkins\"}}}"
+      -d "{\"gauges\":{\"spark_jobs.$SPARK_APP_NAME.duration.s\":{\"value\":$DURATION,\"source\":\"jenkins\"}}}"
     exit 0;
   else
     echo "Job failed:"

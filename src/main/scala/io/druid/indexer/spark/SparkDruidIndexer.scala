@@ -48,7 +48,6 @@ import io.druid.segment.column.ColumnConfig
 import io.druid.segment.incremental.{IncrementalIndex, IncrementalIndexSchema}
 import io.druid.segment.indexing.DataSchema
 import io.druid.segment.loading.DataSegmentPusher
-import io.druid.segment.writeout.OffHeapMemorySegmentWriteOutMediumFactory
 import io.druid.server.DruidNode
 import io.druid.timeline.DataSegment
 import io.druid.timeline.partition.{HashBasedNumberedShardSpec, NoneShardSpec, ShardSpec}
@@ -62,7 +61,7 @@ import org.apache.parquet.hadoop.ParquetInputFormat
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.{AccumulableInfo, SparkListener, SparkListenerApplicationEnd, SparkListenerStageCompleted}
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.{Partitioner, SparkContext}
+import org.apache.spark.{InterruptibleIterator, Partitioner, SparkContext}
 import org.joda.time.{DateTime, Interval}
 
 import scala.collection.JavaConversions._
@@ -235,7 +234,7 @@ object SparkDruidIndexer {
               )
       }
 
-    logInfo("Starting uniqes")
+    logInfo("Starting uniques")
     val optionalDims: Option[Set[String]] = if (dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec.hasCustomDimensions) {
       val parseSpec = dataSchema.getDelegate.getParser.getParseSpec
       Some(parseSpec.getDimensionsSpec.getDimensionNames.asScala.toSet)
@@ -375,27 +374,6 @@ object SparkDruidIndexer {
               incrementalIndex
             }).map(
               incIndex => {
-                val progressIndicator = new ProgressIndicator {
-                  override def stop(): Unit = {
-                    logTrace("Stop")
-                  }
-
-                  override def stopSection(s: String): Unit = {
-                    logTrace(s"Stop [$s]")
-                  }
-
-                  override def progress(): Unit = {
-                    logTrace("Progress")
-                  }
-
-                  override def startSection(s: String): Unit = {
-                    logTrace(s"Start [$s]")
-                  }
-
-                  override def start(): Unit = {
-                    logTrace("Start")
-                  }
-                }
                 val adapter = new QueryableIndexIndexableAdapter(
                   closer.register(
                     StaticIndex.INDEX_IO.loadIndex(
@@ -404,9 +382,7 @@ object SparkDruidIndexer {
                           incIndex,
                           timeInterval,
                           tmpPersistDir,
-                          indexSpec_passable.getDelegate,
-                          progressIndicator,
-                          OffHeapMemorySegmentWriteOutMediumFactory.instance()
+                          indexSpec_passable.getDelegate
                         )
                     )
                   )
@@ -421,7 +397,32 @@ object SparkDruidIndexer {
               true,
               aggs.map(_.getDelegate),
               tmpMergeDir,
-              indexSpec_passable.getDelegate
+              indexSpec_passable.getDelegate,
+              new ProgressIndicator {
+                override def stop(): Unit = {
+                  logTrace("Stop")
+                }
+
+                override def stopSection(s: String): Unit = {
+                  logTrace(s"Stop [$s]")
+                }
+
+                override def progress(): Unit = {
+                  logTrace("Progress")
+                }
+
+                override def startSection(s: String): Unit = {
+                  logTrace(s"Start [$s]")
+                }
+
+                override def start(): Unit = {
+                  logTrace("Start")
+                }
+
+                override def progressSection(s: String, s1: String):Unit = {
+                  logTrace(s"Progress Section [$s] [$s1]")
+                }
+              }
             )
             val allDimensions: util.List[String] = indices
               .map(_.getDimensionNames)
@@ -804,10 +805,9 @@ class DateBucketAndHashPartitioner(@transient var gran: Granularity,
 object StaticIndex {
   val INDEX_IO = new IndexIO(
     SerializedJsonStatic.mapper,
-    OffHeapMemorySegmentWriteOutMediumFactory.instance(),
     new ColumnConfig {
     override def columnCacheSizeBytes(): Int = 1000000
   })
 
-  val INDEX_MERGER_V9 = new IndexMergerV9(SerializedJsonStatic.mapper, INDEX_IO, OffHeapMemorySegmentWriteOutMediumFactory.instance())
+  val INDEX_MERGER_V9 = new IndexMergerV9(SerializedJsonStatic.mapper, INDEX_IO)
 }

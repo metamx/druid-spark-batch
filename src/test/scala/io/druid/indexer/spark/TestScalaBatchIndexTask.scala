@@ -20,6 +20,7 @@
 package io.druid.indexer.spark
 
 import java.util.{Collections, Properties}
+
 import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.inject.{Binder, Module}
@@ -40,6 +41,7 @@ import io.druid.segment.indexing.DataSchema
 import io.druid.segment.indexing.granularity.{GranularitySpec, UniformGranularitySpec}
 import org.joda.time.Interval
 import org.scalatest.{FlatSpec, Matchers}
+
 import scala.collection.JavaConversions._
 import scala.collection.JavaConverters._
 
@@ -61,7 +63,7 @@ object TestScalaBatchIndexTask
   val objectMapper                             = injector.getInstance(classOf[ObjectMapper])
   val taskId                                   = "taskId"
   val dataSource                               = "defaultDataSource"
-  val interval                                 = Interval.parse("1992/2019")
+  val interval                                 = Interval.parse("1992/1999")
   val dataFiles                                = Seq("file:/someFile")
   val parseSpec                                = new DelimitedParseSpec(
     new TimestampSpec("l_shipdate", "yyyy-MM-dd", null),

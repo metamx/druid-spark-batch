@@ -26,13 +26,15 @@ import java.util
 import com.fasterxml.jackson.core.`type`.TypeReference
 import com.google.common.collect.ImmutableList
 import com.google.common.io.Closer
+import io.druid.data.input.avro.AvroParseSpec
 import io.druid.data.input.impl.{DimensionsSpec, JSONParseSpec, StringDimensionSchema, TimestampSpec}
 import io.druid.java.util.common.JodaUtils
 import io.druid.indexer.spark.parquet.ParquetInputRowParser
 import io.druid.java.util.common.granularity.Granularities
 import io.druid.java.util.common.logger.Logger
+import io.druid.java.util.common.parsers.{JSONPathFieldSpec, JSONPathSpec}
 import io.druid.java.util.common.{CompressionUtils, IAE}
-import io.druid.query.aggregation.{CountAggregator, CountAggregatorFactory, LongSumAggregatorFactory}
+import io.druid.query.aggregation.{CountAggregator, CountAggregatorFactory, DoubleSumAggregatorFactory, LongSumAggregatorFactory}
 import io.druid.segment.QueryableIndexIndexableAdapter
 import io.druid.segment.indexing.DataSchema
 import io.druid.timeline.DataSegment
@@ -40,6 +42,7 @@ import org.apache.commons.io.FileUtils
 import org.apache.spark.{SparkConf, SparkContext}
 import org.joda.time.{DateTime, Interval}
 import org.scalatest._
+
 import scala.collection.JavaConverters._
 
 
@@ -476,15 +479,13 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
           override def close(): Unit = sc.stop()
         }
       )
-      val aggName = "sum_val"
-      val aggregatorFactory = new CountAggregatorFactory(aggName)
-      val parseSpec = new JSONParseSpec(
-        new TimestampSpec("l_shipdate", null, null),
+      val aggName = "l_extendedprice_sum"
+      val aggregatorFactory = new DoubleSumAggregatorFactory("l_extendedprice_sum", "l_extendedprice")
+      val parseSpec = new AvroParseSpec(
+        new TimestampSpec("l_shipdate", "millis", null),
         new DimensionsSpec(ImmutableList.of(new StringDimensionSchema("l_suppkey")), null, null),
-        null,
         null
       )
-
       val dataSchema = new DataSchema(
                           dataSource,
                           objectMapper
@@ -495,7 +496,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
       val loadResults = SparkDruidIndexer.loadData(
         data_files,
         new SerializedJson(dataSchema),
-        SparkBatchIndexTask.mapToSegmentIntervals(Seq(interval), Granularities.YEAR),
+        SparkBatchIndexTask.mapToSegmentIntervals(Seq(Interval.parse("1992/1993")), Granularities.YEAR),
         rowsPerPartition,
         rowsPerFlush,
         outDir.toString,
@@ -503,7 +504,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
         buildV9Directly,
         sc
       )
-      loadResults.length should be(7)
+      loadResults.length should be(1)
       loadResults(0) match {
         case segment =>
           segment.getBinaryVersion should be(9)
@@ -512,41 +513,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
           segment.getInterval.contains(interval) should be(false)
           segment.getSize should be > 0L
           segment.getDimensions.asScala.toSet should equal(Set("l_suppkey"))
-          segment.getMetrics.asScala.toSet should equal(Set("sum_val"))
-          val file = new File(segment.getLoadSpec.get("path").toString)
-          file.exists() should be(true)
-          val segDir = Files.createTempDirectory(outDir.toPath, "loadableSegment-%s" format segment.getIdentifier).toFile
-          val copyResult = CompressionUtils.unzip(file, segDir)
-          copyResult.size should be > 0L
-          copyResult.getFiles.asScala.map(_.getName).toSet should equal(
-            Set("00000.smoosh", "meta.smoosh", "version.bin", "factory.json")
-          )
-          val index = StaticIndex.INDEX_IO.loadIndex(segDir)
-          try {
-            val qindex = new QueryableIndexIndexableAdapter(index)
-            qindex.getDimensionNames.asScala.toSet should equal(Set("l_suppkey"))
-            val dimVal = qindex.getDimValueLookup("l_suppkey").asScala
-            dimVal should not be 'Empty
-            dimVal should contain allOf("1883", "1989", "2073")
-            qindex.getMetricNames.asScala.toSet should equal(Set(aggName))
-            qindex.getMetricType(aggName) should equal(aggregatorFactory.getTypeName)
-            qindex.getNumRows should be(11)
-            qindex.getRows.asScala.head.getMetrics()(0) should be(1)
-            index.getDataInterval.getEnd.getMillis should not be JodaUtils.MAX_INSTANT
-          }
-          finally {
-            index.close()
-          }
-      }
-      loadResults(1) match {
-        case segment =>
-          segment.getBinaryVersion should be(9)
-          segment.getDataSource should equal(dataSource)
-          interval.contains(segment.getInterval) should be(true)
-          segment.getInterval.contains(interval) should be(false)
-          segment.getSize should be > 0L
-          segment.getDimensions.asScala.toSet should equal(Set("l_suppkey"))
-          segment.getMetrics.asScala.toSet should equal(Set("sum_val"))
+          segment.getMetrics.asScala.toSet should equal(Set("l_extendedprice_sum"))
           val file = new File(segment.getLoadSpec.get("path").toString)
           file.exists() should be(true)
           val segDir = Files.createTempDirectory(outDir.toPath, "loadableSegment-%s" format segment.getIdentifier).toFile
@@ -565,7 +532,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
             qindex.getMetricNames.asScala.toSet should equal(Set(aggName))
             qindex.getMetricType(aggName) should equal(aggregatorFactory.getTypeName)
             qindex.getNumRows should be(4)
-            qindex.getRows.asScala.head.getMetrics()(0) should be(1)
+            qindex.getRows.asScala.head.getMetrics()(0) should be(61998.31.toFloat)
             index.getDataInterval.getEnd.getMillis should not be JodaUtils.MAX_INSTANT
           }
           finally {

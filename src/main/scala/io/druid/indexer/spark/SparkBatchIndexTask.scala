@@ -23,14 +23,15 @@ import java.io.{Closeable, File, IOException, PrintWriter}
 import java.nio.file.Files
 import java.util
 import java.util.{Objects, Properties}
+
 import com.fasterxml.jackson.annotation.{JsonCreator, JsonProperty}
 import com.google.common.base.{Preconditions, Strings}
 import com.google.common.collect.Iterables
 import com.google.common.io.Closer
 import io.druid.data.input.impl.ParseSpec
-import io.druid.indexing.common.{TaskStatus, TaskToolbox}
-import io.druid.indexing.common.actions.{LockTryAcquireAction, TaskActionClient}
+import io.druid.indexing.common.actions.{LockListAction, LockTryAcquireAction, TaskActionClient}
 import io.druid.indexing.common.task.{AbstractTask, HadoopTask}
+import io.druid.indexing.common.{TaskLockType, TaskStatus, TaskToolbox}
 import io.druid.java.util.common.JodaUtils
 import io.druid.java.util.common.granularity._
 import io.druid.java.util.common.logger.Logger
@@ -40,6 +41,7 @@ import io.druid.segment.indexing.DataSchema
 import io.druid.timeline.DataSegment
 import org.apache.spark.{SparkConf, SparkContext}
 import org.joda.time.Interval
+
 import scala.collection.JavaConversions._
 
 @JsonCreator
@@ -71,17 +73,11 @@ class SparkBatchIndexTask(
   @JsonProperty("buildV9Directly")
   buildV9Directly: Boolean = false
 ) extends HadoopTask(
-  if (id == null) {
-    AbstractTask
-      .makeId(
-        null, SparkBatchIndexTask.TASK_TYPE_BASE, dataSchema.getDataSource,
-        JodaUtils
-          .umbrellaInterval(JodaUtils.condenseIntervals(Preconditions.checkNotNull(intervals, "%s", "intervals")))
-      )
-  }
-  else {
-    id
-  },
+  TaskIdGenerator.getOrMakeId(
+    id, SparkBatchIndexTask.TASK_TYPE_BASE, dataSchema.getDataSource,
+    JodaUtils
+      .umbrellaInterval(JodaUtils.condenseIntervals(Preconditions.checkNotNull(intervals, "%s", "intervals")))
+  ),
   dataSchema.getDataSource,
   hadoopDependencyCoordinates,
   if (context == null) {
@@ -147,10 +143,10 @@ class SparkBatchIndexTask(
       val classLoader = buildClassLoader(toolbox)
       val task = toolbox.getObjectMapper.writeValueAsString(this)
       log.debug("Sending task `%s`", task)
-
+      val taskLocks = toolbox.getTaskActionClient.submit(new LockListAction)
       val result = HadoopTask.invokeForeignLoader[util.ArrayList[String], util.ArrayList[String]](
         "io.druid.indexer.spark.Runner",
-        new util.ArrayList(List(task, Iterables.getOnlyElement(getTaskLocks(toolbox)).getVersion, outputPath)),
+        new util.ArrayList(List(task, Iterables.getOnlyElement(taskLocks).getVersion, outputPath)),
         classLoader
       )
       toolbox.publishSegments(result.map(toolbox.getObjectMapper.readValue(_, classOf[DataSegment])))
@@ -196,7 +192,7 @@ class SparkBatchIndexTask(
 
   @throws(classOf[Exception])
   override def isReady(taskActionClient: TaskActionClient): Boolean = taskActionClient
-    .submit(new LockTryAcquireAction(lockInterval)) != null
+    .submit(new LockTryAcquireAction(TaskLockType.EXCLUSIVE, lockInterval)) != null
 
   @JsonProperty("id")
   override def getId = super.getId

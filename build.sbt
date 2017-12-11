@@ -28,9 +28,11 @@ val druid_version = "0.11.1-SNAPSHOT"
 // This is just used here for Path, so anything that doesn't break spark should be fine
 val hadoop_version = "2.7.3"
 val spark_version = "2.1.0"
-val guava_version = "16.0.1"
+val guava_version = "17.0"
 val mesos_version = "0.25.0"
 val parquet_version = "1.8.2"
+val curator_version = "4.0.0"
+val zookeeper_version = "3.4.10"
 
 libraryDependencies += "org.apache.parquet" % "parquet-common" % parquet_version exclude("com.google.guava", "guava")
 libraryDependencies += "org.apache.parquet" % "parquet-encoding" % parquet_version exclude("com.google.guava", "guava")
@@ -110,10 +112,12 @@ libraryDependencies += "io.druid.extensions" % "druid-avro-extensions" % druid_v
 
 libraryDependencies +=
   "org.joda" % "joda-convert" % "1.8.1" % "provided" // Prevents intellij silliness and sbt warnings
-libraryDependencies += "com.google.guava" % "guava" % guava_version % "provided"// Prevents serde problems for guice exceptions
+libraryDependencies += "com.google.guava" % "guava" % guava_version
 libraryDependencies += "com.sun.jersey" % "jersey-servlet" % "1.17.1" % "provided"
 
 libraryDependencies += "org.apache.mesos" % "mesos"  % mesos_version % "provided"  classifier "shaded-protobuf"
+
+libraryDependencies += "org.apache.zookeeper" % "zookeeper" % zookeeper_version
 
 releaseCrossBuild := true
 
