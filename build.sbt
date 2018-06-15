@@ -21,10 +21,10 @@ name := "druid-spark-batch"
 
 licenses := Seq("Apache License, Version 2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0"))
 homepage := Some(url("https://github.com/metamx/druid-spark-batch"))
-crossScalaVersions := Seq("2.11.7", "2.10.6")
+crossScalaVersions := Seq("2.11.12", "2.10.6")
 releaseIgnoreUntrackedFiles := true
 
-val druid_version = "0.11.0-SNAPSHOT"
+val druid_version = "0.12.1-rc3-SNAPSHOT"
 // This is just used here for Path, so anything that doesn't break spark should be fine
 val hadoop_version = "2.7.3"
 val spark_version = "2.1.0"

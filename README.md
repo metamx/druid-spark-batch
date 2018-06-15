@@ -5,7 +5,7 @@ Druid indexing plugin for using Spark in batch jobs
 
 This repository holds a Druid extension for using Spark as the engine for running batch jobs
 
-To build issue the commnand `sbt clean test publish-local publish-m2`
+To build issue the command `sbt clean test publish-local publish-m2`
 
 ## Default Properties
 The default properties injected into spark are as follows:

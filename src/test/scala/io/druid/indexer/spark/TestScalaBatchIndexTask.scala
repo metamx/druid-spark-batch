@@ -34,7 +34,7 @@ import io.druid.query.aggregation.CountAggregatorFactory
 import io.druid.query.aggregation.DoubleSumAggregatorFactory
 import io.druid.query.aggregation.LongSumAggregatorFactory
 import io.druid.segment.IndexSpec
-import io.druid.segment.data.CompressedObjectStrategy.CompressionStrategy
+import io.druid.segment.data.CompressionStrategy
 import io.druid.segment.data.RoaringBitmapSerdeFactory
 import io.druid.segment.indexing.DataSchema
 import io.druid.segment.indexing.granularity.{GranularitySpec, UniformGranularitySpec}
@@ -163,6 +163,7 @@ object TestScalaBatchIndexTask
       .convertValue(new StringInputRowParser(parseSpec, null), new TypeReference[java.util.Map[String, Any]]() {}),
     aggFactories.toArray,
     granSpec,
+    null,
     mapper
   )
 

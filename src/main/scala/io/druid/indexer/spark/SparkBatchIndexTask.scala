@@ -24,13 +24,16 @@ import java.nio.file.Files
 import java.util
 import java.util.{Objects, Properties}
 import com.fasterxml.jackson.annotation.{JsonCreator, JsonProperty}
+import com.google.common.base.Joiner
 import com.google.common.base.{Preconditions, Strings}
 import com.google.common.collect.Iterables
 import com.google.common.io.Closer
 import io.druid.data.input.impl.ParseSpec
+import io.druid.indexing.common.actions.LockListAction
 import io.druid.indexing.common.{TaskStatus, TaskToolbox}
 import io.druid.indexing.common.actions.{LockTryAcquireAction, TaskActionClient}
-import io.druid.indexing.common.task.{AbstractTask, HadoopTask}
+import io.druid.indexing.common.task.HadoopTask
+import io.druid.java.util.common.DateTimes
 import io.druid.java.util.common.JodaUtils
 import io.druid.java.util.common.granularity._
 import io.druid.java.util.common.logger.Logger
@@ -72,8 +75,7 @@ class SparkBatchIndexTask(
   buildV9Directly: Boolean = false
 ) extends HadoopTask(
   if (id == null) {
-    AbstractTask
-      .makeId(
+    SparkBatchIndexTask.getOrMakeId(
         null, SparkBatchIndexTask.TASK_TYPE_BASE, dataSchema.getDataSource,
         JodaUtils
           .umbrellaInterval(JodaUtils.condenseIntervals(Preconditions.checkNotNull(intervals, "%s", "intervals")))
@@ -150,7 +152,11 @@ class SparkBatchIndexTask(
 
       val result = HadoopTask.invokeForeignLoader[util.ArrayList[String], util.ArrayList[String]](
         "io.druid.indexer.spark.Runner",
-        new util.ArrayList(List(task, Iterables.getOnlyElement(getTaskLocks(toolbox)).getVersion, outputPath)),
+        new util.ArrayList(List(
+          task,
+          Iterables.getOnlyElement(toolbox.getTaskActionClient.submit(new LockListAction())).getVersion,
+          outputPath
+        )),
         classLoader
       )
       toolbox.publishSegments(result.map(toolbox.getObjectMapper.readValue(_, classOf[DataSegment])))
@@ -196,7 +202,7 @@ class SparkBatchIndexTask(
 
   @throws(classOf[Exception])
   override def isReady(taskActionClient: TaskActionClient): Boolean = taskActionClient
-    .submit(new LockTryAcquireAction(lockInterval)) != null
+    .submit(new LockTryAcquireAction(null, lockInterval)) != null
 
   @JsonProperty("id")
   override def getId = super.getId
@@ -249,6 +255,7 @@ object SparkBatchIndexTask
   private val CHILD_PROPERTY_PREFIX        : String = "druid.indexer.fork.property."
   val log            = new Logger(SparkBatchIndexTask.getClass)
   val TASK_TYPE_BASE = "index_spark"
+  private val ID_JOINER = Joiner.on("_")
 
   def mapToSegmentIntervals(originalIntervals: Iterable[Interval], granularity: Granularity): Iterable[Interval] = {
     originalIntervals.map(x => iterableAsScalaIterable(granularity.getIterable(x))).reduce(_ ++ _)
@@ -441,5 +448,23 @@ object SparkBatchIndexTask
     finally {
       closer.close()
     }
+  }
+
+  private[SparkBatchIndexTask] def getOrMakeId(
+    id: String,
+    typeName: String,
+    dataSource: String,
+    interval: Interval
+  ): String = {
+    if (id != null) return id
+    val objects = new util.ArrayList[AnyRef]
+    objects.add(typeName)
+    objects.add(dataSource)
+    if (interval != null) {
+      objects.add(interval.getStart)
+      objects.add(interval.getEnd)
+    }
+    objects.add(DateTimes.nowUtc.toString)
+    ID_JOINER.join(objects)
   }
 }
