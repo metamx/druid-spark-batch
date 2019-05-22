@@ -20,6 +20,7 @@
 package org.apache.druid.indexer.spark
 
 import java.io._
+import java.nio.ByteBuffer
 import java.nio.file.Files
 import java.util
 
@@ -31,14 +32,14 @@ import com.google.common.io.Closer
 import com.google.inject.name.Names
 import com.google.inject.{Binder, Injector, Key, Module}
 import org.apache.avro.generic.GenericRecord
-import org.apache.druid.data.input.MapBasedInputRow
+import org.apache.druid.data.input.{InputRow, MapBasedInputRow}
 import org.apache.druid.data.input.impl._
 import org.apache.druid.guice.annotations.{Json, Self}
 import org.apache.druid.guice.{GuiceInjectors, JsonConfigProvider}
 import org.apache.druid.indexer.HadoopyStringInputRowParser
 import org.apache.druid.initialization.Initialization
 import org.apache.druid.java.util.common.{IAE, ISE}
-import org.apache.druid.java.util.common.granularity.Granularity
+import org.apache.druid.java.util.common.granularity.{Granularities, Granularity, GranularityType, PeriodGranularity}
 import org.apache.druid.java.util.common.lifecycle.Lifecycle
 import org.apache.druid.java.util.common.logger.Logger
 import org.apache.druid.java.util.emitter.service.ServiceEmitter
@@ -64,7 +65,7 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.{AccumulableInfo, SparkListener, SparkListenerApplicationEnd, SparkListenerStageCompleted}
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.{Partitioner, SparkContext}
-import org.joda.time.{DateTime, Interval}
+import org.joda.time.{DateTime, Interval, Period}
 
 import scala.collection.JavaConversions._
 import scala.collection.JavaConverters._
@@ -142,15 +143,22 @@ object SparkDruidIndexer {
     // Hadoopify the data so it doesn't look so silly in Spark's DAG
     // Input data is probably in gigantic files, so redistribute
     val baseData = dataSchema.getDelegate.getParser match {
-      case x @ (_: StringInputRowParser | _: HadoopyStringInputRowParser) =>
-        getP[String](sc.textFile(dataFiles mkString ","), () => dataSchema.getDelegate.getParser.asInstanceOf[InputRowParser[String]], dataSchema, startingPartitions, passableIntervals)
+      case x : StringInputRowParser =>
+        getP[String, StringInputRowParser](sc.textFile(dataFiles mkString ","),
+          () => dataSchema.getDelegate.getParser.asInstanceOf[StringInputRowParser],
+          (parser) => parser.parse _,
+          (parser) => str => parser.parseBatch(ByteBuffer.wrap(str.getBytes)),
+          dataSchema, startingPartitions, passableIntervals)
       case x => {
         logTrace(
           "Could not figure out how to handle class " +
             s"[${x.getClass.getCanonicalName}]. " +
             "Hoping it can handle string input"
         )
-        getP[String](sc.textFile(dataFiles mkString ","), () => dataSchema.getDelegate.getParser.asInstanceOf[InputRowParser[String]], dataSchema, startingPartitions, passableIntervals)
+        getP[String, InputRowParser[Any]](sc.textFile(dataFiles mkString ","), () => dataSchema.getDelegate.getParser.asInstanceOf[InputRowParser[Any]],
+          (parser) => parser.parse _,
+          (parser) => str => parser.parseBatch(str),
+          dataSchema, startingPartitions, passableIntervals)
       }
       case x: ParquetAvroHadoopInputRowParser => {
         val jobConf = new JobConf()
@@ -158,7 +166,11 @@ object SparkDruidIndexer {
         val rdd = sc.newAPIHadoopFile(dataFiles.mkString(","), classOf[ParquetInputFormat[GenericRecord]],
           classOf[Void], classOf[GenericRecord], jobConf).values
 
-        getP[GenericRecord](rdd, () => dataSchema.getDelegate.getParser.asInstanceOf[InputRowParser[GenericRecord]], dataSchema, startingPartitions, passableIntervals)
+        getP[GenericRecord, ParquetAvroHadoopInputRowParser](rdd,
+          () => dataSchema.getDelegate.getParser.asInstanceOf[ParquetAvroHadoopInputRowParser],
+          (parser) => parser.parse _,
+          (parser) => str => parser.parseBatch(str),
+          dataSchema, startingPartitions, passableIntervals)
       }
     }
 
@@ -368,30 +380,37 @@ object SparkDruidIndexer {
     results.toSeq
   }
 
-  def getP[T](rdd: RDD[T],
-              parserProvider: () => InputRowParser[T],
+  def getP[T, R <: InputRowParser[_]](rdd: RDD[T],
+              parserProvider: () => R,
+              parseFn: R => T => InputRow,
+              parseBatchFn: R => T => Seq[InputRow],
               dataSchema: SerializedJson[DataSchema],
               startingPartitions: Int,
               passableIntervals: Seq[Interval]) = {
     rdd.filter { f =>
-      passableIntervals.exists(_.contains(parserProvider().parse(f).getTimestamp))
+      val parser = parserProvider()
+      passableIntervals.exists { i =>
+        val row = parseFn(parser)(f)
+        i.contains(row.getTimestamp)
+      }
     }.repartition(startingPartitions)
       // Persist the strings only rather than the event map
       // We have to do the parsing twice this way, but serde of the map is killer as well
       .persist(StorageLevel.DISK_ONLY)
       .mapPartitions { it =>
-          val queryGran = dataSchema.getDelegate.getGranularitySpec.getQueryGranularity
-          val segmentGran = dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity
-          it.flatMap(parserProvider().parseBatch).map(
-            r => {
-              var k: Long = queryGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis
-              if (k < 0) {
-                // Example: AllGranularity
-                k = segmentGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis
-              }
-              k -> r.asInstanceOf[MapBasedInputRow].getEvent
+        val queryGran = dataSchema.getDelegate.getGranularitySpec.getQueryGranularity
+        val segmentGran = dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity
+        val parser = parserProvider()
+        it.flatMap(parseBatchFn(parser)).map(
+          r => {
+            var k: Long = queryGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis
+            if (k < 0) {
+              // Example: AllGranularity
+              k = segmentGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis
             }
-          )
+            k -> r.asInstanceOf[MapBasedInputRow].getEvent
+          }
+        )
       }
   }
 
@@ -662,13 +681,25 @@ class DateBucketPartitioner(@transient var gran: Granularity, intervals: Iterabl
   @throws(classOf[IOException])
   private def writeObject(out: ObjectOutputStream): Unit = {
     out.defaultWriteObject()
-    out.writeObject(new SerializedJson[Granularity](gran))
+    val granularity = gran.asInstanceOf[PeriodGranularity]
+    if (GranularityType.isStandard(gran)) {
+      out.writeObject(new SerializedJson[String](granularity.getPeriod.toString))
+    } else {
+      out.writeObject(new SerializedJson[Granularity](granularity))
+    }
   }
 
   @throws(classOf[IOException])
   private def readObject(in: ObjectInputStream): Unit = {
     in.defaultReadObject()
-    gran = in.readObject().asInstanceOf[SerializedJson[Granularity]].delegate
+    val value = in.readObject()
+    gran = value match {
+      case s: SerializedJson[_] =>
+        s.delegate match {
+          case str: String => new PeriodGranularity(new Period(str), null, null)
+          case x : Granularity => x
+        }
+    }
   }
 }
 
@@ -724,13 +755,25 @@ class DateBucketAndHashPartitioner(@transient var gran: Granularity,
   @throws(classOf[IOException])
   private def writeObject(out: ObjectOutputStream): Unit = {
     out.defaultWriteObject()
-    out.writeObject(new SerializedJson[Granularity](gran))
+    val granularity = gran.asInstanceOf[PeriodGranularity]
+    if (GranularityType.isStandard(gran)) {
+      out.writeObject(new SerializedJson[String](granularity.getPeriod.toString))
+    } else {
+      out.writeObject(new SerializedJson[Granularity](granularity))
+    }
   }
 
   @throws(classOf[IOException])
   private def readObject(in: ObjectInputStream): Unit = {
     in.defaultReadObject()
-    gran = in.readObject().asInstanceOf[SerializedJson[Granularity]].delegate
+    val value = in.readObject()
+    gran = value match {
+      case s: SerializedJson[_] =>
+        s.delegate match {
+          case str: String => new PeriodGranularity(new Period(str), null, null)
+          case x : Granularity => x
+        }
+    }
   }
 }
 
