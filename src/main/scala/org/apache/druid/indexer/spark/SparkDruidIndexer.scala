@@ -17,11 +17,12 @@
  *  under the License.
  */
 
-package io.druid.indexer.spark
+package org.apache.druid.indexer.spark
 
 import java.io._
 import java.nio.file.Files
 import java.util
+
 import com.esotericsoftware.kryo.io.{Input, Output}
 import com.esotericsoftware.kryo.{Kryo, KryoSerializable}
 import com.fasterxml.jackson.core.`type`.TypeReference
@@ -29,42 +30,49 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.common.io.Closer
 import com.google.inject.name.Names
 import com.google.inject.{Binder, Injector, Key, Module}
-import io.druid.data.input.MapBasedInputRow
-import io.druid.data.input.impl._
-import io.druid.guice.annotations.{Json, Self}
-import io.druid.guice.{GuiceInjectors, JsonConfigProvider}
-import io.druid.indexer.HadoopyStringInputRowParser
-import io.druid.initialization.Initialization
-import io.druid.java.util.common.{IAE, ISE}
-import io.druid.java.util.common.granularity.Granularity
-import io.druid.java.util.common.lifecycle.Lifecycle
-import io.druid.java.util.common.logger.Logger
-import io.druid.java.util.emitter.service.ServiceEmitter
-import io.druid.java.util.emitter.service.ServiceMetricEvent
-import io.druid.query.aggregation.AggregatorFactory
-import io.druid.segment._
-import io.druid.segment.column.ColumnConfig
-import io.druid.segment.incremental.{IncrementalIndex, IncrementalIndexSchema}
-import io.druid.segment.indexing.DataSchema
-import io.druid.segment.loading.DataSegmentPusher
-import io.druid.segment.writeout.TmpFileSegmentWriteOutMediumFactory
-import io.druid.server.DruidNode
-import io.druid.timeline.DataSegment
-import io.druid.timeline.partition.{HashBasedNumberedShardSpec, NoneShardSpec, ShardSpec}
+import org.apache.avro.generic.GenericRecord
+import org.apache.druid.data.input.MapBasedInputRow
+import org.apache.druid.data.input.impl._
+import org.apache.druid.guice.annotations.{Json, Self}
+import org.apache.druid.guice.{GuiceInjectors, JsonConfigProvider}
+import org.apache.druid.indexer.HadoopyStringInputRowParser
+import org.apache.druid.initialization.Initialization
+import org.apache.druid.java.util.common.{IAE, ISE}
+import org.apache.druid.java.util.common.granularity.Granularity
+import org.apache.druid.java.util.common.lifecycle.Lifecycle
+import org.apache.druid.java.util.common.logger.Logger
+import org.apache.druid.java.util.emitter.service.ServiceEmitter
+import org.apache.druid.java.util.emitter.service.ServiceMetricEvent
+import org.apache.druid.query.aggregation.AggregatorFactory
+import org.apache.druid.segment._
+import org.apache.druid.segment.column.ColumnConfig
+import org.apache.druid.segment.incremental.{IncrementalIndex, IncrementalIndexSchema}
+import org.apache.druid.segment.indexing.DataSchema
+import org.apache.druid.segment.loading.DataSegmentPusher
+import org.apache.druid.segment.writeout.TmpFileSegmentWriteOutMediumFactory
+import org.apache.druid.server.DruidNode
+import org.apache.druid.timeline.DataSegment
+import org.apache.druid.timeline.partition.{HashBasedNumberedShardSpec, NoneShardSpec, ShardSpec}
 import org.apache.commons.io.FileUtils
+import org.apache.druid.data.input.parquet.avro.ParquetAvroHadoopInputRowParser
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import org.apache.hadoop.mapred.JobConf
+import org.apache.parquet.avro.DruidParquetAvroReadSupport
+import org.apache.parquet.hadoop.ParquetInputFormat
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.{AccumulableInfo, SparkListener, SparkListenerApplicationEnd, SparkListenerStageCompleted}
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.{Partitioner, SparkContext}
 import org.joda.time.{DateTime, Interval}
+
 import scala.collection.JavaConversions._
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 object SparkDruidIndexer {
   private val log = new Logger(getClass)
+
   def loadData(
                 dataFiles: Seq[String],
                 dataSchema: SerializedJson[DataSchema],
@@ -77,8 +85,8 @@ object SparkDruidIndexer {
                 sc: SparkContext
               ): Seq[DataSegment] = {
     val dataSource = dataSchema.getDelegate.getDataSource
-    val lifecycle      = SerializedJsonStatic.lifecycle
-    val emitter        = SerializedJsonStatic.emitter
+    val lifecycle = SerializedJsonStatic.lifecycle
+    val emitter = SerializedJsonStatic.emitter
 
     logInfo("Initializing emitter for metrics")
     sc.addSparkListener(new SparkListener() {
@@ -88,7 +96,7 @@ object SparkDruidIndexer {
           "appId" -> sc.applicationId,
           "dataSource" -> dataSource,
           "stageId" -> stageCompleted.stageInfo.stageId.toString,
-          "intervals" -> ingestIntervals.mkString("[",",","]")
+          "intervals" -> ingestIntervals.mkString("[", ",", "]")
         )
         val accumulatedInfo = stageCompleted.stageInfo.accumulables.toMap.flatMap {
           case (_, AccumulableInfo(_, Some(name), _, Some(value: Long), _, _, _)) =>
@@ -99,12 +107,13 @@ object SparkDruidIndexer {
         accumulatedInfo foreach { case (aggName, value) =>
           logDebug("emitting metric: %s".format(aggName))
           val eventBuilder = ServiceMetricEvent.builder()
-          dimensions foreach { case (n, v) => eventBuilder.setDimension(n, v)}
+          dimensions foreach { case (n, v) => eventBuilder.setDimension(n, v) }
           emitter.emit(
             eventBuilder.build(aggName, value)
           )
         }
       }
+
       // Closes lifecycle when sc.stop() is called
       override def onApplicationEnd(applicationEnd: SparkListenerApplicationEnd): Unit = {
         lifecycle.stop()
@@ -131,55 +140,27 @@ object SparkDruidIndexer {
     logInfo(s"Splitting [$totalGZSize] gz bytes into [$startingPartitions] partitions")
 
     // Hadoopify the data so it doesn't look so silly in Spark's DAG
-    val baseData = sc.textFile(dataFiles mkString ",")
-      // Input data is probably in gigantic files, so redistribute
-      .filter(
-      s => {
-        val row = dataSchema.getDelegate.getParser match {
-          case x: StringInputRowParser => x.parse(s)
-          case x: HadoopyStringInputRowParser => x.parse(s)
-          case x =>
-            logTrace(
-              "Could not figure out how to handle class " +
-                s"[${x.getClass.getCanonicalName}]. " +
-                "Hoping it can handle string input"
-            )
-            x.asInstanceOf[InputRowParser[Any]].parse(s)
-        }
-        passableIntervals.exists(_.contains(row.getTimestamp))
+    // Input data is probably in gigantic files, so redistribute
+    val baseData = dataSchema.getDelegate.getParser match {
+      case x @ (_: StringInputRowParser | _: HadoopyStringInputRowParser) =>
+        getP[String](sc.textFile(dataFiles mkString ","), () => dataSchema.getDelegate.getParser.asInstanceOf[InputRowParser[String]], dataSchema, startingPartitions, passableIntervals)
+      case x => {
+        logTrace(
+          "Could not figure out how to handle class " +
+            s"[${x.getClass.getCanonicalName}]. " +
+            "Hoping it can handle string input"
+        )
+        getP[String](sc.textFile(dataFiles mkString ","), () => dataSchema.getDelegate.getParser.asInstanceOf[InputRowParser[String]], dataSchema, startingPartitions, passableIntervals)
       }
-    )
-      .repartition(startingPartitions)
-      // Persist the strings only rather than the event map
-      // We have to do the parsing twice this way, but serde of the map is killer as well
-      .persist(StorageLevel.DISK_ONLY)
-      .mapPartitions(
-        it => {
-          val i = dataSchema.getDelegate.getParser match {
-            case x: StringInputRowParser => it.map(x.parse)
-            case x: HadoopyStringInputRowParser => it.map(x.parse)
-            case x =>
-              logTrace(
-                "Could not figure out how to handle class " +
-                  s"[${x.getClass.getCanonicalName}]. " +
-                  "Hoping it can handle string input"
-              )
-              it.map(x.asInstanceOf[InputRowParser[Any]].parse)
-          }
-          val queryGran = dataSchema.getDelegate.getGranularitySpec.getQueryGranularity
-          val segmentGran = dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity
-          i.map(
-            r => {
-              var k: Long = queryGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis
-              if (k < 0) {
-                // Example: AllGranularity
-                k = segmentGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis
-              }
-              k -> r.asInstanceOf[MapBasedInputRow].getEvent
-            }
-          )
-        }
-      )
+      case x: ParquetAvroHadoopInputRowParser => {
+        val jobConf = new JobConf()
+        ParquetInputFormat.setReadSupportClass(jobConf, classOf[DruidParquetAvroReadSupport])
+        val rdd = sc.newAPIHadoopFile(dataFiles.mkString(","), classOf[ParquetInputFormat[GenericRecord]],
+          classOf[Void], classOf[GenericRecord], jobConf).values
+
+        getP[GenericRecord](rdd, () => dataSchema.getDelegate.getParser.asInstanceOf[InputRowParser[GenericRecord]], dataSchema, startingPartitions, passableIntervals)
+      }
+    }
 
     logInfo("Starting uniqes")
     val optionalDims: Option[Set[String]] = if (dataSchema.getDelegate.getParser.getParseSpec.getDimensionsSpec.hasCustomDimensions) {
@@ -190,8 +171,8 @@ object SparkDruidIndexer {
     }
 
     val uniquesEvents: RDD[(Long, util.Map[String, AnyRef])] = optionalDims match {
-      case Some(dims) =>baseData.mapValues(_.filterKeys(dims.contains))
-      case None => baseData
+      case Some(dims) => baseData.mapValues(_.filterKeys(dims.contains))
+      case None => baseData.asInstanceOf[RDD[(Long, util.Map[String, AnyRef])]]
     }
 
     val partitionMap: Map[Long, Long] = uniquesEvents.countApproxDistinctByKey(
@@ -218,7 +199,7 @@ object SparkDruidIndexer {
       (a: ((Long, Long), Int)) => {
         logInfo(
           s"Date Bucket [${a._1._1}] with partition number [${a._1._2}]" +
-            s" has total partition number [${ a._2}]"
+            s" has total partition number [${a._2}]"
         )
       }
     }
@@ -387,6 +368,33 @@ object SparkDruidIndexer {
     results.toSeq
   }
 
+  def getP[T](rdd: RDD[T],
+              parserProvider: () => InputRowParser[T],
+              dataSchema: SerializedJson[DataSchema],
+              startingPartitions: Int,
+              passableIntervals: Seq[Interval]) = {
+    rdd.filter { f =>
+      passableIntervals.exists(_.contains(parserProvider().parse(f).getTimestamp))
+    }.repartition(startingPartitions)
+      // Persist the strings only rather than the event map
+      // We have to do the parsing twice this way, but serde of the map is killer as well
+      .persist(StorageLevel.DISK_ONLY)
+      .mapPartitions { it =>
+          val queryGran = dataSchema.getDelegate.getGranularitySpec.getQueryGranularity
+          val segmentGran = dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity
+          it.flatMap(parserProvider().parseBatch).map(
+            r => {
+              var k: Long = queryGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis
+              if (k < 0) {
+                // Example: AllGranularity
+                k = segmentGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis
+              }
+              k -> r.asInstanceOf[MapBasedInputRow].getEvent
+            }
+          )
+      }
+  }
+
   /**
     * Take a map of indices and size for that index, and return a map of (index, sub_index)->new_index
     * each new_index of which can have at most rowsPerPartition assuming random-ish hashing into the indices
@@ -430,7 +438,7 @@ object SparkDruidIndexer {
 }
 
 object SerializedJsonStatic {
-  val LOG = new Logger("io.druid.indexer.spark.SerializedJsonStatic")
+  val LOG = new Logger("org.apache.druid.indexer.spark.SerializedJsonStatic")
   val defaultService = "spark-indexer"
   // default indexing service port
   val defaultPort = "8090"
@@ -729,7 +737,6 @@ class DateBucketAndHashPartitioner(@transient var gran: Granularity,
 object StaticIndex {
   val INDEX_IO = new IndexIO(
     SerializedJsonStatic.mapper,
-    TmpFileSegmentWriteOutMediumFactory.instance(),
     new ColumnConfig {
       override def columnCacheSizeBytes(): Int = 1000000
     }

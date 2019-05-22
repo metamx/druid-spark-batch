@@ -17,32 +17,35 @@
  *  under the License.
  */
 
-package io.druid.indexer.spark
+package org.apache.druid.indexer.spark
 
 import java.io.{Closeable, File, IOException, PrintWriter}
 import java.nio.file.Files
 import java.util
 import java.util.{Objects, Properties}
+
 import com.fasterxml.jackson.annotation.{JsonCreator, JsonProperty}
 import com.google.common.base.Joiner
 import com.google.common.base.{Preconditions, Strings}
 import com.google.common.collect.Iterables
 import com.google.common.io.Closer
-import io.druid.data.input.impl.ParseSpec
-import io.druid.indexing.common.actions.LockListAction
-import io.druid.indexing.common.{TaskStatus, TaskToolbox}
-import io.druid.indexing.common.actions.{LockTryAcquireAction, TaskActionClient}
-import io.druid.indexing.common.task.HadoopTask
-import io.druid.java.util.common.DateTimes
-import io.druid.java.util.common.JodaUtils
-import io.druid.java.util.common.granularity._
-import io.druid.java.util.common.logger.Logger
-import io.druid.query.aggregation.AggregatorFactory
-import io.druid.segment.IndexSpec
-import io.druid.segment.indexing.DataSchema
-import io.druid.timeline.DataSegment
+import org.apache.druid.data.input.impl.ParseSpec
+import org.apache.druid.indexer.TaskStatus
+import org.apache.druid.indexing.common.actions.LockListAction
+import org.apache.druid.indexing.common.TaskToolbox
+import org.apache.druid.indexing.common.actions.{LockTryAcquireAction, TaskActionClient}
+import org.apache.druid.indexing.common.task.HadoopTask
+import org.apache.druid.java.util.common.DateTimes
+import org.apache.druid.java.util.common.JodaUtils
+import org.apache.druid.java.util.common.granularity._
+import org.apache.druid.java.util.common.logger.Logger
+import org.apache.druid.query.aggregation.AggregatorFactory
+import org.apache.druid.segment.IndexSpec
+import org.apache.druid.segment.indexing.DataSchema
+import org.apache.druid.timeline.DataSegment
 import org.apache.spark.{SparkConf, SparkContext}
 import org.joda.time.Interval
+
 import scala.collection.JavaConversions._
 
 @JsonCreator
@@ -151,7 +154,7 @@ class SparkBatchIndexTask(
       log.debug("Sending task `%s`", task)
 
       val result = HadoopTask.invokeForeignLoader[util.ArrayList[String], util.ArrayList[String]](
-        "io.druid.indexer.spark.Runner",
+        "org.apache.druid.indexer.spark.spark.Runner",
         new util.ArrayList(List(
           task,
           Iterables.getOnlyElement(toolbox.getTaskActionClient.submit(new LockListAction())).getVersion,
@@ -267,13 +270,13 @@ object SparkBatchIndexTask
     "druid.extensions.loadList"
   )
 
-  // See io.druid.indexing.overlord.config.ForkingTaskRunnerConfig.allowedPrefixes
+  // See org.apache.druid.indexing.overlord.config.ForkingTaskRunnerConfig.allowedPrefixes
   // We don't include tmp.dir
   // user.timezone and file.encoding are set above
   private[SparkBatchIndexTask] val allowedPrefixes = Seq(
     "com.metamx",
     "druid",
-    "io.druid",
+    "org.apache.druid",
     "hadoop"
   )
 
@@ -350,7 +353,7 @@ object SparkBatchIndexTask
       }
     ).foreach(
       x => {
-        log.info("Setting io.druid property [%s]", x)
+        log.info("Setting org.apache.druid property [%s]", x)
         propertiesToSet.setProperty(x, System.getProperty(x))
       }
     )
@@ -404,13 +407,13 @@ object SparkBatchIndexTask
       )
 
       // Should be set by HadoopTask for job jars
-      // Hadoop tasks use io.druid.indexer.JobHelper::setupClasspath to replicate their jars.
+      // Hadoop tasks use org.apache.druid.indexer.JobHelper::setupClasspath to replicate their jars.
       // The jars are put in some universally accessable location and each job addresses them.
       // Spark has internal mechanisms for shipping its jars around, making an external blob storage (like HDFS or S3)
       // not required for jar distribution.
       // In general they both "make list of jars... distribute via XXX... make that list available on all the workers"
       // but how they accomplish the XXX part is different.
-      // So this **can't** use io.druid.indexer.JobHelper::setupClasspath, and has to have its own way of parsing here.
+      // So this **can't** use org.apache.druid.indexer.JobHelper::setupClasspath, and has to have its own way of parsing here.
       val hadoopTaskJars = System.getProperties.toMap
         .getOrElse(
           "druid.hadoop.internal.classpath",

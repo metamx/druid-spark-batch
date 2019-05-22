@@ -17,27 +17,27 @@
  *  under the License.
  */
 
-package io.druid.indexer.spark
+package org.apache.druid.indexer.spark
 
 import java.util.{Collections, Properties}
 import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.inject.{Binder, Module}
 import com.google.inject.name.Names
-import io.druid.data.input.impl._
-import io.druid.guice.GuiceInjectors
-import io.druid.indexing.common.task.Task
-import io.druid.initialization.Initialization
-import io.druid.java.util.common.granularity.{Granularities, Granularity}
-import io.druid.query.aggregation.AggregatorFactory
-import io.druid.query.aggregation.CountAggregatorFactory
-import io.druid.query.aggregation.DoubleSumAggregatorFactory
-import io.druid.query.aggregation.LongSumAggregatorFactory
-import io.druid.segment.IndexSpec
-import io.druid.segment.data.CompressionStrategy
-import io.druid.segment.data.RoaringBitmapSerdeFactory
-import io.druid.segment.indexing.DataSchema
-import io.druid.segment.indexing.granularity.{GranularitySpec, UniformGranularitySpec}
+import org.apache.druid.data.input.impl._
+import org.apache.druid.guice.GuiceInjectors
+import org.apache.druid.indexing.common.task.Task
+import org.apache.druid.initialization.Initialization
+import org.apache.druid.java.util.common.granularity.{Granularities, Granularity}
+import org.apache.druid.query.aggregation.AggregatorFactory
+import org.apache.druid.query.aggregation.CountAggregatorFactory
+import org.apache.druid.query.aggregation.DoubleSumAggregatorFactory
+import org.apache.druid.query.aggregation.LongSumAggregatorFactory
+import org.apache.druid.segment.IndexSpec
+import org.apache.druid.segment.data.CompressionStrategy
+import org.apache.druid.segment.data.RoaringBitmapSerdeFactory
+import org.apache.druid.segment.indexing.DataSchema
+import org.apache.druid.segment.indexing.granularity.{GranularitySpec, UniformGranularitySpec}
 import org.joda.time.Interval
 import org.scalatest.{FlatSpec, Matchers}
 import scala.collection.JavaConversions._
