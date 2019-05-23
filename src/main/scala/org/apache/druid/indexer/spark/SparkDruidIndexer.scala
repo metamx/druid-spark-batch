@@ -32,7 +32,7 @@ import com.google.common.io.Closer
 import com.google.inject.name.Names
 import com.google.inject.{Binder, Injector, Key, Module}
 import org.apache.avro.generic.GenericRecord
-import org.apache.druid.data.input.{InputRow, MapBasedInputRow}
+import org.apache.druid.data.input.{InputRow, MapBasedInputRow, MapBasedRow}
 import org.apache.druid.data.input.impl._
 import org.apache.druid.guice.annotations.{Json, Self}
 import org.apache.druid.guice.{GuiceInjectors, JsonConfigProvider}
@@ -73,6 +73,17 @@ import scala.util.control.NonFatal
 
 object SparkDruidIndexer {
   private val log = new Logger(getClass)
+
+  def rewriteMapBasedInputRow(ir: InputRow) =
+    ir match {
+      case x: MapBasedInputRow => {
+        val map = new util.HashMap[String, Any]()
+        map.putAll(x.getEvent)
+        // Rewrite rows because ObjectFlatteners can't be deserialized
+        new MapBasedInputRow(x.getTimestamp, x.getDimensions, map.asInstanceOf[util.Map[String, Object]])
+      }
+      case x => x
+    }
 
   def loadData(
                 dataFiles: Seq[String],
@@ -145,21 +156,11 @@ object SparkDruidIndexer {
     val baseData = dataSchema.getDelegate.getParser match {
       case x : StringInputRowParser =>
         getP[String, StringInputRowParser](sc.textFile(dataFiles mkString ","),
-          () => dataSchema.getDelegate.getParser.asInstanceOf[StringInputRowParser],
-          (parser) => parser.parse _,
-          (parser) => str => parser.parseBatch(ByteBuffer.wrap(str.getBytes)),
+          (parser) => str => rewriteMapBasedInputRow(parser.parse(str)),
+          (parser) => str => {
+            parser.parseBatch(ByteBuffer.wrap(str.getBytes)).map(rewriteMapBasedInputRow)
+          },
           dataSchema, startingPartitions, passableIntervals)
-      case x => {
-        logTrace(
-          "Could not figure out how to handle class " +
-            s"[${x.getClass.getCanonicalName}]. " +
-            "Hoping it can handle string input"
-        )
-        getP[String, InputRowParser[Any]](sc.textFile(dataFiles mkString ","), () => dataSchema.getDelegate.getParser.asInstanceOf[InputRowParser[Any]],
-          (parser) => parser.parse _,
-          (parser) => str => parser.parseBatch(str),
-          dataSchema, startingPartitions, passableIntervals)
-      }
       case x: ParquetAvroHadoopInputRowParser => {
         val jobConf = new JobConf()
         ParquetInputFormat.setReadSupportClass(jobConf, classOf[DruidParquetAvroReadSupport])
@@ -167,7 +168,17 @@ object SparkDruidIndexer {
           classOf[Void], classOf[GenericRecord], jobConf).values
 
         getP[GenericRecord, ParquetAvroHadoopInputRowParser](rdd,
-          () => dataSchema.getDelegate.getParser.asInstanceOf[ParquetAvroHadoopInputRowParser],
+          (parser) => parser.parse _,
+          (parser) => str => parser.parseBatch(str),
+          dataSchema, startingPartitions, passableIntervals)
+      }
+      case x => {
+        logTrace(
+          "Could not figure out how to handle class " +
+            s"[${x.getClass.getCanonicalName}]. " +
+            "Hoping it can handle string input"
+        )
+        getP[String, InputRowParser[Any]](sc.textFile(dataFiles mkString ","),
           (parser) => parser.parse _,
           (parser) => str => parser.parseBatch(str),
           dataSchema, startingPartitions, passableIntervals)
@@ -283,7 +294,7 @@ object SparkDruidIndexer {
 
 
             val groupedRows = rows.grouped(rowsPerPersist)
-            val indices: util.List[IndexableAdapter] = groupedRows.map(rs => {
+            val indices = groupedRows.map(rs => {
               // TODO: rewrite this without using IncrementalIndex, because IncrementalIndex bears a lot of overhead
               // to support concurrent querying, that is not needed in Spark
               val incrementalIndex = new IncrementalIndex.Builder()
@@ -312,7 +323,8 @@ object SparkDruidIndexer {
                 )
               })
               incrementalIndex
-            }).map(
+            })
+            val indicesList = indices.map(
               incIndex => {
                 val adapter = new QueryableIndexIndexableAdapter(
                   closer.register(
@@ -333,13 +345,13 @@ object SparkDruidIndexer {
               }
             ).toList
             val file = finalStaticIndexer.merge(
-              indices,
+              indicesList,
               true,
               aggs.map(_.getDelegate),
               tmpMergeDir,
               indexSpec_passable.getDelegate
             )
-            val allDimensions: util.List[String] = indices
+            val allDimensions: util.List[String] = indicesList
               .map(_.getDimensionNames)
               .foldLeft(Set[String]())(_ ++ _)
               .toList
@@ -380,15 +392,18 @@ object SparkDruidIndexer {
     results.toSeq
   }
 
+  private def delegateParser[T](dataSchema: SerializedJson[DataSchema])() = {
+    dataSchema.getDelegate.getParser.asInstanceOf[T]
+  }
+
   def getP[T, R <: InputRowParser[_]](rdd: RDD[T],
-              parserProvider: () => R,
-              parseFn: R => T => InputRow,
-              parseBatchFn: R => T => Seq[InputRow],
-              dataSchema: SerializedJson[DataSchema],
-              startingPartitions: Int,
-              passableIntervals: Seq[Interval]) = {
+                                      parseFn: R => T => InputRow,
+                                      parseBatchFn: R => T => Seq[InputRow],
+                                      dataSchema: SerializedJson[DataSchema],
+                                      startingPartitions: Int,
+                                      passableIntervals: Seq[Interval]) = {
     rdd.filter { f =>
-      val parser = parserProvider()
+      val parser = dataSchema.getDelegate.getParser.asInstanceOf[R]
       passableIntervals.exists { i =>
         val row = parseFn(parser)(f)
         i.contains(row.getTimestamp)
@@ -400,7 +415,7 @@ object SparkDruidIndexer {
       .mapPartitions { it =>
         val queryGran = dataSchema.getDelegate.getGranularitySpec.getQueryGranularity
         val segmentGran = dataSchema.getDelegate.getGranularitySpec.getSegmentGranularity
-        val parser = parserProvider()
+        val parser = dataSchema.getDelegate.getParser.asInstanceOf[R]
         it.flatMap(parseBatchFn(parser)).map(
           r => {
             var k: Long = queryGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis

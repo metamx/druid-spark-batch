@@ -128,7 +128,7 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
                 dataSchema.getParser.getParseSpec.getDimensionsSpec.getDimensionExclusions.asScala.toSet
             )
           for (dimension <- qindex.getDimensionNames.iterator().asScala) {
-            val dimVal = qindex.getDimValueLookup(dimension).asScala
+            val dimVal : Iterable[String] = qindex.getDimValueLookup(dimension).asScala
             dimVal should not be 'Empty
             for (dv <- dimVal) {
               Option(dv) match {
