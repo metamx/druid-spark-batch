@@ -36,7 +36,7 @@ import org.apache.druid.data.input.{InputRow, MapBasedInputRow, MapBasedRow}
 import org.apache.druid.data.input.impl._
 import org.apache.druid.guice.annotations.{Json, Self}
 import org.apache.druid.guice.{GuiceInjectors, JsonConfigProvider}
-import org.apache.druid.indexer.HadoopyStringInputRowParser
+import org.apache.druid.indexer.{HadoopDruidIndexerConfig, HadoopIOConfig, HadoopIngestionSpec, HadoopyStringInputRowParser}
 import org.apache.druid.initialization.Initialization
 import org.apache.druid.java.util.common.{IAE, ISE}
 import org.apache.druid.java.util.common.granularity.{Granularities, Granularity, GranularityType, PeriodGranularity}
@@ -56,10 +56,11 @@ import org.apache.druid.timeline.DataSegment
 import org.apache.druid.timeline.partition.{HashBasedNumberedShardSpec, NoneShardSpec, ShardSpec}
 import org.apache.commons.io.FileUtils
 import org.apache.druid.data.input.parquet.avro.ParquetAvroHadoopInputRowParser
+import org.apache.druid.segment.transform.TransformingInputRowParser
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapred.JobConf
-import org.apache.parquet.avro.DruidParquetAvroReadSupport
+import org.apache.parquet.avro.{AvroReadSupport, DruidParquetAvroReadSupport}
 import org.apache.parquet.hadoop.ParquetInputFormat
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.{AccumulableInfo, SparkListener, SparkListenerApplicationEnd, SparkListenerStageCompleted}
@@ -156,20 +157,20 @@ object SparkDruidIndexer {
     val baseData = dataSchema.getDelegate.getParser match {
       case x : StringInputRowParser =>
         getP[String, StringInputRowParser](sc.textFile(dataFiles mkString ","),
-          (parser) => str => rewriteMapBasedInputRow(parser.parse(str)),
+          (parser) => str => parser.parse(str),
           (parser) => str => {
-            parser.parseBatch(ByteBuffer.wrap(str.getBytes)).map(rewriteMapBasedInputRow)
+            parser.parseBatch(ByteBuffer.wrap(str.getBytes))
           },
           dataSchema, startingPartitions, passableIntervals)
-      case x: ParquetAvroHadoopInputRowParser => {
+      case x @ (_:ParquetAvroHadoopInputRowParser | _: TransformingInputRowParser[GenericRecord]) => {
+        // Just write the conf without anything
         val jobConf = new JobConf()
-        ParquetInputFormat.setReadSupportClass(jobConf, classOf[DruidParquetAvroReadSupport])
+        ParquetInputFormat.setReadSupportClass(jobConf, classOf[AvroReadSupport[GenericRecord]])
         val rdd = sc.newAPIHadoopFile(dataFiles.mkString(","), classOf[ParquetInputFormat[GenericRecord]],
           classOf[Void], classOf[GenericRecord], jobConf).values
-
-        getP[GenericRecord, ParquetAvroHadoopInputRowParser](rdd,
-          (parser) => parser.parse _,
-          (parser) => str => parser.parseBatch(str),
+        getP(rdd,
+          (parser: InputRowParser[GenericRecord]) => parser.parse _,
+          (parser: InputRowParser[GenericRecord]) => (str: GenericRecord) => parser.parseBatch(str),
           dataSchema, startingPartitions, passableIntervals)
       }
       case x => {
@@ -405,7 +406,7 @@ object SparkDruidIndexer {
     rdd.filter { f =>
       val parser = dataSchema.getDelegate.getParser.asInstanceOf[R]
       passableIntervals.exists { i =>
-        val row = parseFn(parser)(f)
+        val row = parseBatchFn(parser)(f).head
         i.contains(row.getTimestamp)
       }
     }.repartition(startingPartitions)
@@ -423,7 +424,7 @@ object SparkDruidIndexer {
               // Example: AllGranularity
               k = segmentGran.bucketStart(new DateTime(r.getTimestampFromEpoch)).getMillis
             }
-            k -> r.asInstanceOf[MapBasedInputRow].getEvent
+            k -> rewriteMapBasedInputRow(r).asInstanceOf[MapBasedInputRow].getEvent
           }
         )
       }

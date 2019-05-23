@@ -33,6 +33,8 @@ import org.apache.druid.java.util.common.{CompressionUtils, IAE}
 import org.apache.druid.query.aggregation.LongSumAggregatorFactory
 import org.apache.druid.segment.{QueryableIndexIndexableAdapter, QueryableIndexStorageAdapter, TimeAndDimsPointer}
 import org.apache.commons.io.FileUtils
+import org.apache.druid.data.input.parquet.avro.ParquetAvroHadoopInputRowParser
+import org.apache.druid.data.input.parquet.simple.{ParquetHadoopInputRowParser, ParquetParseSpec}
 import org.apache.druid.segment.column.NumericColumn
 import org.apache.druid.segment.data.CloseableIndexed
 import org.apache.spark.{SparkConf, SparkContext}
@@ -279,6 +281,106 @@ class TestSparkDruidIndexer extends FlatSpec with Matchers
           // TODO : Still don't understand that selector API shit
 //          val pointer : TimeAndDimsPointer = qindex.getRows.getMarkedPointer
 //          pointer. .getMetrics()(0) should be(1)
+          index.getDataInterval.getEnd.getMillis should not be JodaUtils.MAX_INSTANT
+        }
+        finally {
+          index.close()
+        }
+      }
+    }
+    finally {
+      closer.close()
+    }
+  }
+
+  it should "return proper DataSegments from parquet" in {
+    val data_files = Seq(this.getClass.getResource("/parquet/event.parquet").toString)
+    val closer = Closer.create()
+    val outDir = Files.createTempDirectory("segments").toFile
+    (outDir.mkdirs() || outDir.exists()) && outDir.isDirectory should be(true)
+    closer.register(
+      new Closeable()
+      {
+        override def close(): Unit = FileUtils.deleteDirectory(outDir)
+      }
+    )
+    try {
+      val conf = new SparkConf()
+        .setAppName("Simple Application")
+        .setMaster("local[4]")
+        .set("user.timezone", "UTC")
+        .set("file.encoding", "UTF-8")
+        .set("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager")
+        .set("org.jboss.logging.provider", "slf4j")
+        .set("druid.processing.columnCache.sizeBytes", "1000000000")
+        .set("spark.driver.host", "localhost")
+        .set("spark.executor.userClassPathFirst", "true")
+        .set("spark.driver.userClassPathFirst", "true")
+        .set("spark.kryo.referenceTracking", "false")
+        .registerKryoClasses(SparkBatchIndexTask.getKryoClasses())
+
+      val sc = new SparkContext(conf)
+      closer.register(
+        new Closeable
+        {
+          override def close(): Unit = sc.stop()
+        }
+      )
+      val aggName = "agg_met1"
+      val aggregatorFactory = new LongSumAggregatorFactory(aggName, "met1")
+      val dataSchema = buildDataSchema(
+        parseSpec = new
+            ParquetParseSpec(
+              new TimestampSpec("ts", null, null),
+              new DimensionsSpec(ImmutableList.of(new StringDimensionSchema("dim1")), ImmutableList.of("ts"), null),
+              null
+            ),
+        parser = (spec) => new ParquetAvroHadoopInputRowParser(spec, false),
+        aggFactories = Seq(aggregatorFactory)
+      )
+
+      val loadResults = SparkDruidIndexer.loadData(
+        data_files,
+        new SerializedJson(dataSchema),
+        SparkBatchIndexTask.mapToSegmentIntervals(Seq(interval), Granularities.YEAR),
+        rowsPerPartition,
+        rowsPerFlush,
+        outDir.toString,
+        indexSpec,
+        buildV9Directly,
+        sc
+      )
+      loadResults.length should be(1)
+      for (
+        segment <- loadResults
+      ) {
+        segment.getBinaryVersion should be(9)
+        segment.getDataSource should equal(dataSource)
+        interval.contains(segment.getInterval) should be(true)
+        segment.getInterval.contains(interval) should be(false)
+        segment.getSize should be > 0L
+        segment.getDimensions.asScala.toSet should equal(Set("dim1"))
+        segment.getMetrics.asScala.toList should equal(dataSchema.getAggregators.map(_.getName).toList)
+        val file = new File(segment.getLoadSpec.get("path").toString)
+        file.exists() should be(true)
+        val segDir = Files.createTempDirectory(outDir.toPath, "loadableSegment-%s" format segment.getId.toString).toFile
+        val copyResult = CompressionUtils.unzip(file, segDir)
+        copyResult.size should be > 0L
+        copyResult.getFiles.asScala.map(_.getName).toSet should equal(
+          Set("00000.smoosh", "meta.smoosh", "version.bin", "factory.json")
+        )
+        val index = StaticIndex.INDEX_IO.loadIndex(segDir)
+        try {
+          val qindex = new QueryableIndexIndexableAdapter(index)
+          qindex.getDimensionNames.asScala.toSet should equal(Set("dim1"))
+          val dimVal : Iterable[String] = qindex.getDimValueLookup("dim1").asScala
+          dimVal should not be 'Empty
+          for (dv <- dimVal) {
+            dv should equal("val1")
+          }
+          qindex.getMetricNames.asScala.toSet should equal(Set(aggName))
+          qindex.getMetricType(aggName) should equal(aggregatorFactory.getTypeName)
+          qindex.getNumRows should be(1)
           index.getDataInterval.getEnd.getMillis should not be JodaUtils.MAX_INSTANT
         }
         finally {

@@ -156,11 +156,11 @@ object TestScalaBatchIndexTask
     parseSpec: ParseSpec = parseSpec,
     aggFactories: Seq[AggregatorFactory] = aggFactories,
     granSpec: GranularitySpec = granSpec,
-    mapper: ObjectMapper = objectMapper
+    mapper: ObjectMapper = objectMapper,
+    parser: ParseSpec => InputRowParser[_] = (spec) => new StringInputRowParser(spec, null)
   ) = new DataSchema(
     dataSource,
-    objectMapper
-      .convertValue(new StringInputRowParser(parseSpec, null), new TypeReference[java.util.Map[String, Any]]() {}),
+    objectMapper.convertValue(parser(parseSpec), new TypeReference[java.util.Map[String, Any]]() {}),
     aggFactories.toArray,
     granSpec,
     null,
