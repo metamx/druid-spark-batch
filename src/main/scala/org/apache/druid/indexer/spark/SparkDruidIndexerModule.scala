@@ -17,28 +17,28 @@
  *  under the License.
  */
 
-package io.druid.indexer.spark
+package org.apache.druid.indexer.spark
 
 import com.fasterxml.jackson.databind.Module
 import com.fasterxml.jackson.databind.jsontype.NamedType
 import com.fasterxml.jackson.databind.module.SimpleModule
 import com.google.inject.Binder
-import io.druid.initialization.DruidModule
+import org.apache.druid.initialization.DruidModule
 import java.util
+import java.util.Collections
+
 import scala.collection.JavaConverters._
 
 class SparkDruidIndexerModule extends DruidModule
 {
-  override def getJacksonModules: util.List[_ <: Module] = {
-    List(
-      new SimpleModule("SparkDruidIndexer")
-        .registerSubtypes(
-          new NamedType(classOf[SparkBatchIndexTask], "index_spark")
-        )
-    ).asJava
-  }
+  override def getJacksonModules: util.List[_ <: Module] = Collections.singletonList(
+    new SimpleModule("SparkDruidIndexerModule")
+      .registerSubtypes(
+        new NamedType(classOf[SparkBatchIndexTask], "index_spark")
+      ))
 
   override def configure(binder: Binder): Unit = {
     // NOOP
   }
 }
+

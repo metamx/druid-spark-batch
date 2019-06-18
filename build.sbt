@@ -21,15 +21,17 @@ name := "druid-spark-batch"
 
 licenses := Seq("Apache License, Version 2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0"))
 homepage := Some(url("https://github.com/metamx/druid-spark-batch"))
-crossScalaVersions := Seq("2.11.12", "2.10.6")
+crossScalaVersions := Seq("2.11.12")
+scalaVersion := "2.11.12"
 releaseIgnoreUntrackedFiles := true
 
-val druid_version = "0.12.1-rc3-SNAPSHOT"
+val druid_version = "0.14.1-incubating"
 // This is just used here for Path, so anything that doesn't break spark should be fine
 val hadoop_version = "2.7.3"
-val spark_version = "2.1.0"
+val spark_version = "2.4.1"
 val guava_version = "16.0.1"
-val mesos_version = "0.25.0"
+val mesos_version
+= "0.25.0"
 
 val sparkDep = ("org.apache.spark" %% "spark-core" % spark_version
   exclude("org.roaringbitmap", "RoaringBitmap")
@@ -95,16 +97,36 @@ val hadoopDep = ("org.apache.hadoop" % "hadoop-client" % hadoop_version
 libraryDependencies += hadoopDep
 
 libraryDependencies += "org.scalatest" %% "scalatest" % "2.2.4" % "test"
-libraryDependencies += "io.druid" % "druid-processing" % druid_version % "provided"
-libraryDependencies += "io.druid" % "druid-server" % druid_version % "provided"
-libraryDependencies += "io.druid" % "druid-indexing-service" % druid_version % "provided"
-libraryDependencies += "io.druid" % "druid-indexing-hadoop" % druid_version % "provided"
+libraryDependencies += "org.apache.druid" % "druid-processing" % druid_version % "provided"
+libraryDependencies += "org.apache.druid" % "druid-server" % druid_version % "provided"
+libraryDependencies += "org.apache.druid" % "druid-indexing-service" % druid_version % "provided"
+libraryDependencies += "org.apache.druid" % "druid-indexing-hadoop" % druid_version % "provided"
+libraryDependencies += "org.apache.druid.extensions" % "druid-avro-extensions" % druid_version % "provided"
+libraryDependencies += "org.apache.druid.extensions" % "druid-parquet-extensions" % druid_version % "provided"
+
 libraryDependencies +=
   "org.joda" % "joda-convert" % "1.8.1" % "provided" // Prevents intellij silliness and sbt warnings
 libraryDependencies += "com.google.guava" % "guava" % guava_version % "provided"// Prevents serde problems for guice exceptions
 libraryDependencies += "com.sun.jersey" % "jersey-servlet" % "1.17.1" % "provided"
 
 libraryDependencies += "org.apache.mesos" % "mesos"  % mesos_version % "provided"  classifier "shaded-protobuf"
+
+lazy val parquetV = "1.10.1"
+
+libraryDependencies += "org.apache.parquet" % "parquet-common" % parquetV
+libraryDependencies += "org.apache.parquet" % "parquet-encoding" % parquetV
+libraryDependencies += "org.apache.parquet" % "parquet-column" % parquetV
+libraryDependencies += "org.apache.parquet" % "parquet-hadoop" % parquetV
+libraryDependencies += "org.apache.parquet" % "parquet-avro" % parquetV
+
+libraryDependencies += "org.apache.zookeeper" % "zookeeper" % "3.5.4-beta" % "provided"
+libraryDependencies += "org.apache.curator" % "curator-framework" % "4.1.0" % "provided"
+libraryDependencies += "io.dropwizard.metrics" % "metrics-core" % "4.1.0"
+libraryDependencies += "io.dropwizard.metrics" % "metrics-jvm" % "4.1.0"
+libraryDependencies += "io.dropwizard.metrics" % "metrics-json" % "4.1.0"
+libraryDependencies += "io.dropwizard.metrics" % "metrics-graphite" % "4.1.0"
+
+libraryDependencies += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.9.8"
 
 releaseCrossBuild := true
 

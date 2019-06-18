@@ -17,7 +17,7 @@
  *  under the License.
  */
 
-package io.druid.indexer.spark;
+package org.apache.druid.indexer.spark;
 
 import java.util.ArrayList;
 

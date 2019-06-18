@@ -17,18 +17,18 @@
  *  under the License.
  */
 
-package io.druid.indexer.spark
+package org.apache.druid.indexer.spark
 
 import com.google.inject.Binder
 import com.google.inject.Key
 import com.google.inject.Module
 import com.google.inject.name.Names
-import io.druid.guice.GuiceInjectors
-import io.druid.guice.JsonConfigProvider
-import io.druid.guice.annotations.Self
-import io.druid.initialization.DruidModule
-import io.druid.initialization.Initialization
-import io.druid.server.DruidNode
+import org.apache.druid.guice.GuiceInjectors
+import org.apache.druid.guice.JsonConfigProvider
+import org.apache.druid.guice.annotations.Self
+import org.apache.druid.initialization.DruidModule
+import org.apache.druid.initialization.Initialization
+import org.apache.druid.server.DruidNode
 import java.util.ServiceLoader
 import org.scalatest.FlatSpec
 import org.scalatest.Matchers
@@ -38,8 +38,9 @@ class TestSparkDruidIndexerModule extends FlatSpec with Matchers
 {
   "SparkDruidIndexerModules" should "load properly" in {
     val loader: ServiceLoader[DruidModule] = ServiceLoader.load(classOf[DruidModule], classOf[TestSparkDruidIndexerModule].getClassLoader)
-    val module: DruidModule = loader.asScala.head
-    module.getClass.getCanonicalName should startWith("io.druid.indexer.spark.SparkDruidIndexerModule")
+    val modules = loader.asScala
+    val maybeModule = modules.find(_.getClass.getCanonicalName.startsWith("org.apache.druid.indexer.spark.SparkDruidIndexerModule"))
+    maybeModule shouldNot be(None)
     Initialization.makeInjectorWithModules(
       GuiceInjectors.makeStartupInjector(), Seq(
         new Module()
@@ -49,13 +50,13 @@ class TestSparkDruidIndexerModule extends FlatSpec with Matchers
               .bindInstance(
                 binder,
                 Key.get(classOf[DruidNode], classOf[Self]),
-                new DruidNode("spark-indexer-test", null, null, null, true, false)
+                new DruidNode("spark-indexer-test", null, false, null, null, true, false)
               )
             binder.bindConstant.annotatedWith(Names.named("servicePort")).to(0)
             binder.bindConstant.annotatedWith(Names.named("tlsServicePort")).to(-1)
           }
         },
-        module
+        maybeModule.get
       ).asJava
     )
   }
