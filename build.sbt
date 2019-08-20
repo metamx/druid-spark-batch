@@ -105,6 +105,7 @@ libraryDependencies ++= Seq(
   "org.apache.druid" % "druid-indexing-service" % druidVersion % "provided",
   "org.apache.druid.extensions" % "druid-avro-extensions" % druidVersion % "provided",
   "org.apache.druid.extensions" % "druid-parquet-extensions" % druidVersion % "provided",
+  //"io.confluent" % "kafka-schema-registry-client" % "3.3.1",
   "org.apache.parquet" % "parquet-common" % parquetVersion,
   "org.apache.parquet" % "parquet-encoding" % parquetVersion,
   "org.apache.parquet" % "parquet-column" % parquetVersion,
@@ -168,9 +169,12 @@ assemblyMergeStrategy in assembly := {
     oldStrategy(x)
 }
 
-resolvers += Resolver.mavenLocal
-resolvers += "JitPack.IO" at "https://jitpack.io"
-resolvers += "Clojars.org" at "https://clojars.org/repo/"
+resolvers ++= Seq(
+  Resolver.mavenLocal,
+  "JitPack.IO" at "https://jitpack.io",
+  "Clojars.org" at "https://clojars.org/repo/",
+  "Confluent" at "http://packages.confluent.io/maven/"
+)
 
 publishMavenStyle := true
 
