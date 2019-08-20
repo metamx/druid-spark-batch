@@ -35,6 +35,7 @@ val parquetVersion = "1.10.1"
 //DO NOT pull in version newer than 2.6.7 as it causes issues with JSON parsing for Granularity
 //Make sure this version always matches with Druid
 val jacksonVersion = "2.6.7"
+val javaTargetVersion = sys.props.getOrElse("JAVA_TARGET_VERSION", default = "1.8") 
 
 val sparkDeps = Seq(
   ("org.apache.spark" %% "spark-sql" % sparkVersion
@@ -178,6 +179,7 @@ resolvers ++= Seq(
 
 publishMavenStyle := true
 
-scalacOptions in ThisBuild ++= Seq("-unchecked", "-deprecation")
+javacOptions ++= Seq("-source", javaTargetVersion, "-target", javaTargetVersion)
+scalacOptions ++= Seq("-unchecked", "-deprecation",s"-target:jvm-$javaTargetVersion")
 
 fork in Test := true
