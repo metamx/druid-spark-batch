@@ -1,5 +1,5 @@
 {
-  "type": "index_spark_2.11",
+  "type": "index_spark",
   "id": "taskId",
   "dataSchema": {
     "dataSource": "defaultDataSource",
@@ -125,7 +125,7 @@
   },
   "classpathPrefix": "somePrefix.jar",
   "hadoopDependencyCoordinates": [
-    "org.apache.spark:spark-core_2.10:1.6.1-mmx0"
+    "org.apache.spark:spark-core"
   ],
   "groupId": "taskId",
   "dataSource": "defaultDataSource",

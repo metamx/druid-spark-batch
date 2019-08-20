@@ -16,29 +16,23 @@
  *  specific language governing permissions and limitations
  *  under the License.
  */
+package org.apache.druid.indexer.spark
 
-package io.druid.indexer.spark
+import org.apache.druid.segment.column.ColumnConfig
+import org.apache.druid.segment.writeout.TmpFileSegmentWriteOutMediumFactory
+import org.apache.druid.segment.{IndexIO, IndexMergerV9}
 
-import com.fasterxml.jackson.databind.Module
-import com.fasterxml.jackson.databind.jsontype.NamedType
-import com.fasterxml.jackson.databind.module.SimpleModule
-import com.google.inject.Binder
-import io.druid.initialization.DruidModule
-import java.util
-import scala.collection.JavaConverters._
+object StaticIndex {
+  val INDEX_IO = new IndexIO(
+    SerializedJsonStatic.mapper,
+    new ColumnConfig {
+      override def columnCacheSizeBytes(): Int = 1000000
+    }
+  )
 
-class SparkDruidIndexerModule extends DruidModule
-{
-  override def getJacksonModules: util.List[_ <: Module] = {
-    List(
-      new SimpleModule("SparkDruidIndexer")
-        .registerSubtypes(
-          new NamedType(classOf[SparkBatchIndexTask], "index_spark")
-        )
-    ).asJava
-  }
-
-  override def configure(binder: Binder): Unit = {
-    // NOOP
-  }
+  val INDEX_MERGER_V9 = new IndexMergerV9(
+    SerializedJsonStatic.mapper,
+    INDEX_IO,
+    TmpFileSegmentWriteOutMediumFactory.instance()
+  )
 }

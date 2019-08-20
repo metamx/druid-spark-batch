@@ -17,39 +17,44 @@
  *  under the License.
  */
 
-package io.druid.indexer.spark
+package org.apache.druid.indexer.spark
 
-import com.google.inject.Binder
-import com.google.inject.Key
-import com.google.inject.Module
-import com.google.inject.name.Names
-import io.druid.guice.GuiceInjectors
-import io.druid.guice.JsonConfigProvider
-import io.druid.guice.annotations.Self
-import io.druid.initialization.DruidModule
-import io.druid.initialization.Initialization
-import io.druid.server.DruidNode
 import java.util.ServiceLoader
-import org.scalatest.FlatSpec
-import org.scalatest.Matchers
+
+import com.google.inject.name.Names
+import com.google.inject.{Binder, Key, Module}
+import org.apache.druid.guice.annotations.Self
+import org.apache.druid.guice.{GuiceInjectors, JsonConfigProvider}
+import org.apache.druid.initialization.{DruidModule, Initialization}
+import org.apache.druid.server.DruidNode
+import org.scalatest.{FlatSpec, Matchers}
+
 import scala.collection.JavaConverters._
 
-class TestSparkDruidIndexerModule extends FlatSpec with Matchers
-{
+class TestSparkDruidIndexerModule extends FlatSpec with Matchers {
   "SparkDruidIndexerModules" should "load properly" in {
-    val loader: ServiceLoader[DruidModule] = ServiceLoader.load(classOf[DruidModule], classOf[TestSparkDruidIndexerModule].getClassLoader)
-    val module: DruidModule = loader.asScala.head
-    module.getClass.getCanonicalName should startWith("io.druid.indexer.spark.SparkDruidIndexerModule")
+    val loader: ServiceLoader[DruidModule] = ServiceLoader.load(
+      classOf[DruidModule],
+      classOf[TestSparkDruidIndexerModule].getClassLoader
+    )
+    val module = loader.asScala.head
+    module.getClass.getCanonicalName should startWith("org.apache.druid.indexer.spark.SparkDruidIndexerModule")
     Initialization.makeInjectorWithModules(
       GuiceInjectors.makeStartupInjector(), Seq(
-        new Module()
-        {
-          override def configure(binder: Binder) = {
+        new Module() {
+          override def configure(binder: Binder): Unit = {
             JsonConfigProvider
               .bindInstance(
                 binder,
                 Key.get(classOf[DruidNode], classOf[Self]),
-                new DruidNode("spark-indexer-test", null, null, null, true, false)
+                new DruidNode(
+                  "spark-indexer-test",
+                  null,
+                  false,
+                  null,
+                  null,
+                  true,
+                  false)
               )
             binder.bindConstant.annotatedWith(Names.named("servicePort")).to(0)
             binder.bindConstant.annotatedWith(Names.named("tlsServicePort")).to(-1)

@@ -17,15 +17,14 @@
  *  under the License.
  */
 
-package io.druid.indexer.spark;
+package org.apache.druid.indexer.spark;
 
 import java.util.ArrayList;
 
 // This makes referencing the class in a reflective way easier
-public class Runner
-{
-  public static ArrayList<String> runTask(ArrayList<String> args)
-  {
+@SuppressWarnings("unused")
+public class Runner {
+  public static ArrayList<String> runTask(ArrayList<String> args) {
     return SparkBatchIndexTask.runTask(args);
   }
 }
