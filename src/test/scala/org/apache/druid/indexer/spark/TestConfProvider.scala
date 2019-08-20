@@ -122,7 +122,7 @@ object TestConfProvider {
   )
   val properties = {
     val prop = new Properties()
-    prop.putAll(
+    (prop: java.util.Map[Object, Object]).putAll(
       Map(
         ("user.timezone", "UTC"),
         ("file.encoding", "UTF-8"),
