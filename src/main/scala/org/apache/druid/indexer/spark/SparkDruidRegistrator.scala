@@ -16,20 +16,19 @@
  *  specific language governing permissions and limitations
  *  under the License.
  */
+package org.apache.druid.indexer.spark
 
-package io.druid.indexer.spark
+import java.util
 
-import io.druid.initialization.DruidModule
-import java.util.ServiceLoader
-import org.scalatest.FlatSpec
-import org.scalatest.Matchers
-import scala.collection.JavaConverters._
+import com.esotericsoftware.kryo.Kryo
+import org.apache.spark.serializer.KryoRegistrator
 
-class TestSparkModuleLoad  extends FlatSpec with Matchers
-{
-  "SparkDruidIndexerModules" should "load version 2.10 properly" in {
-    val loader: ServiceLoader[DruidModule] = ServiceLoader.load(classOf[DruidModule], classOf[TestSparkDruidIndexerModule].getClassLoader)
-    val module: DruidModule = loader.asScala.head
-    module.isInstanceOf[SparkDruidIndexerModule] should be(true)
+/**
+  * Companion module which registers [[MutableMapSerializer]] for [[java.util.Map]] class to avoid
+  * https://github.com/apache/incubator-druid/pull/6027
+  */
+class SparkDruidRegistrator extends KryoRegistrator {
+  override def registerClasses(kryo: Kryo): Unit = {
+    kryo.addDefaultSerializer(classOf[util.Map[_, _]], classOf[MutableMapSerializer])
   }
 }

@@ -16,52 +16,57 @@
  *  specific language governing permissions and limitations
  *  under the License.
  */
-organization := "io.druid.extensions"
+organization := "org.apache.druid.extensions"
 name := "druid-spark-batch"
 
 licenses := Seq("Apache License, Version 2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0"))
 homepage := Some(url("https://github.com/metamx/druid-spark-batch"))
-crossScalaVersions := Seq("2.11.12", "2.10.6")
+crossScalaVersions := Seq("2.11.12", "2.12.8")
+scalaVersion := "2.11.12"
 releaseIgnoreUntrackedFiles := true
 
-val druid_version = "0.12.1-rc3-SNAPSHOT"
-// This is just used here for Path, so anything that doesn't break spark should be fine
-val hadoop_version = "2.7.3"
-val spark_version = "2.1.0"
-val guava_version = "16.0.1"
-val mesos_version = "0.25.0"
+val druidVersion = "0.15.1-incubating"
+val hadoopVersion = "2.6.0"
+val sparkVersion = "2.4.3"
+val guavaVersion = "15.0" //Newer than 15.0 cause issues with Spark 2.4
+val mesosVersion = "1.8.1"
+val codahaleMetricsVersion = "4.1.0"
+val parquetVersion = "1.10.1"
+//DO NOT pull in version newer than 2.6.7 as it causes issues with JSON parsing for Granularity
+//Make sure this version always matches with Druid
+val jacksonVersion = "2.6.7"
 
-val sparkDep = ("org.apache.spark" %% "spark-core" % spark_version
-  exclude("org.roaringbitmap", "RoaringBitmap")
-  exclude("log4j", "log4j")
-  exclude("org.slf4j", "slf4j-log4j12")
-  exclude("com.google.guava", "guava")
-  exclude("org.apache.hadoop", "hadoop-client")
-  exclude("org.apache.hadoop", "hadoop-yarn-api")
-  exclude("org.apache.hadoop", "hadoop-yarn-common")
-  exclude("com.sun.jersey", "jersey-server")
-  exclude("com.sun.jersey", "jersey-core")
-  exclude("com.sun.jersey", "jersey-core")
-  exclude("com.sun.jersey.contribs", "jersey-guice")
-  exclude("org.eclipse.jetty", "jetty-server")
-  exclude("org.eclipse.jetty", "jetty-plus")
-  exclude("org.eclipse.jetty", "jetty-util")
-  exclude("org.eclipse.jetty", "jetty-http")
-  exclude("org.eclipse.jetty", "jetty-servlet")
-  exclude("com.esotericsoftware.minlog", "minlog")
-  /*
-  exclude("com.fasterxml.jackson.core", "jackson-core")
-  exclude("com.fasterxml.jackson.core", "jackson-annotations")
-  exclude("com.fasterxml.jackson.dataformat", "jackson-dataformat-smile")
-  exclude("com.fasterxml.jackson.datatype", "jackson-datatype-joda")
-  exclude("com.fasterxml.jackson.core", "jackson-databind")
-  */
-  exclude("io.netty", "netty")
-  exclude("org.apache.mesos", "mesos")
-  ) % "provided"
-libraryDependencies += sparkDep
+val sparkDeps = Seq(
+  ("org.apache.spark" %% "spark-sql" % sparkVersion
+    exclude("org.roaringbitmap", "RoaringBitmap")
+    exclude("log4j", "log4j")
+    exclude("org.slf4j", "slf4j-log4j12")
+    exclude("com.google.guava", "guava")
+    exclude("org.apache.hadoop", "hadoop-client")
+    exclude("org.apache.hadoop", "hadoop-yarn-api")
+    exclude("org.apache.hadoop", "hadoop-yarn-common")
+    exclude("com.sun.jersey", "jersey-server")
+    exclude("com.sun.jersey", "jersey-core")
+    exclude("com.sun.jersey", "jersey-core")
+    exclude("com.sun.jersey.contribs", "jersey-guice")
+    exclude("org.eclipse.jetty", "jetty-server")
+    exclude("org.eclipse.jetty", "jetty-plus")
+    exclude("org.eclipse.jetty", "jetty-util")
+    exclude("org.eclipse.jetty", "jetty-http")
+    exclude("org.eclipse.jetty", "jetty-servlet")
+    exclude("io.netty", "netty")
+    exclude("org.apache.mesos", "mesos")
+    exclude("io.dropwizard.metrics", "metrics-core")
+    exclude("io.dropwizard.metrics", "metrics-jvm")
+    exclude("io.dropwizard.metrics", "metrics-json")
+    exclude("io.dropwizard.metrics", "metrics-ganglia")
+    exclude("io.dropwizard.metrics", "metrics-graphite")
+  ) % "provided",
+  "org.apache.spark" %% "spark-avro" % sparkVersion
+)
+libraryDependencies ++= sparkDeps
 
-val hadoopDep = ("org.apache.hadoop" % "hadoop-client" % hadoop_version
+val hadoopDep = ("org.apache.hadoop" % "hadoop-client" % hadoopVersion
   exclude("asm", "asm")
   exclude("org.ow2.asm", "asm")
   exclude("org.jboss.netty", "netty")
@@ -90,21 +95,47 @@ val hadoopDep = ("org.apache.hadoop" % "hadoop-client" % hadoop_version
   exclude("com.fasterxml.jackson.datatype", "jackson-datatype-joda")
   exclude("com.fasterxml.jackson.core", "jackson-databind")
   exclude("io.netty", "netty")
-  ) % "provided"
+) % "provided"
 // For Path
 libraryDependencies += hadoopDep
 
-libraryDependencies += "org.scalatest" %% "scalatest" % "2.2.4" % "test"
-libraryDependencies += "io.druid" % "druid-processing" % druid_version % "provided"
-libraryDependencies += "io.druid" % "druid-server" % druid_version % "provided"
-libraryDependencies += "io.druid" % "druid-indexing-service" % druid_version % "provided"
-libraryDependencies += "io.druid" % "druid-indexing-hadoop" % druid_version % "provided"
-libraryDependencies +=
-  "org.joda" % "joda-convert" % "1.8.1" % "provided" // Prevents intellij silliness and sbt warnings
-libraryDependencies += "com.google.guava" % "guava" % guava_version % "provided"// Prevents serde problems for guice exceptions
-libraryDependencies += "com.sun.jersey" % "jersey-servlet" % "1.17.1" % "provided"
+//io.dropwizard.metrics deps are needed to prevent
+//java.lang.IncompatibleClassChangeError: Found interface com.codahale.metrics.Timer$Context, but class was expected
+libraryDependencies ++= Seq(
+  "org.apache.druid" % "druid-indexing-service" % druidVersion % "provided",
+  "org.apache.druid.extensions" % "druid-avro-extensions" % druidVersion % "provided",
+  "org.apache.druid.extensions" % "druid-parquet-extensions" % druidVersion % "provided",
+  "org.apache.parquet" % "parquet-common" % parquetVersion,
+  "org.apache.parquet" % "parquet-encoding" % parquetVersion,
+  "org.apache.parquet" % "parquet-column" % parquetVersion,
+  "org.apache.parquet" % "parquet-hadoop" % parquetVersion,
+  "org.apache.parquet" % "parquet-avro" % parquetVersion,
+  "org.apache.mesos" % "mesos"  % mesosVersion % "provided" classifier "shaded-protobuf",
+  "io.dropwizard.metrics" % "metrics-core" % codahaleMetricsVersion % "provided",
+  "io.dropwizard.metrics" % "metrics-jvm" % codahaleMetricsVersion % "provided",
+  "io.dropwizard.metrics" % "metrics-json" % codahaleMetricsVersion % "provided",
+  "io.dropwizard.metrics" % "metrics-graphite" % codahaleMetricsVersion % "provided",
+  "io.dropwizard.metrics" % "metrics-ganglia" % "3.2.6" % "provided",
+  "org.joda" % "joda-convert" % "2.2.1" % "provided",
+  "com.sun.jersey" % "jersey-servlet" % "1.19.4" % "provided",
+  "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVersion,
+  "org.apache.logging.log4j" % "log4j-web" % "2.12.1",
+  "org.scalatest" %% "scalatest" % "2.2.4" % "test"
+)
 
-libraryDependencies += "org.apache.mesos" % "mesos"  % mesos_version % "provided"  classifier "shaded-protobuf"
+val druidOverrides = Set(
+  "com.google.guava" % "guava" % guavaVersion, //Hadoop pulls in Guava 20 which breaks Spark 2.4
+  "com.fasterxml.jackson.core" % "jackson-core" % jacksonVersion,
+  "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVersion,
+  "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVersion,
+  "com.fasterxml.jackson.dataformat" % "jackson-dataformat-smile" % jacksonVersion,
+  "com.fasterxml.jackson.datatype" % "jackson-datatype-joda" % jacksonVersion,
+  "com.fasterxml.jackson.datatype" % "jackson-datatype-joda" % jacksonVersion,
+  "com.fasterxml.jackson.jaxrs" % "jackson-jaxrs-json-provider" % jacksonVersion,
+  "com.fasterxml.jackson.jaxrs" % "jackson-jaxrs-smile-provider" % jacksonVersion
+)
+
+dependencyOverrides ++= druidOverrides
 
 releaseCrossBuild := true
 
@@ -139,29 +170,10 @@ assemblyMergeStrategy in assembly := {
 
 resolvers += Resolver.mavenLocal
 resolvers += "JitPack.IO" at "https://jitpack.io"
+resolvers += "Clojars.org" at "https://clojars.org/repo/"
 
 publishMavenStyle := true
 
-//TODO: remove this before moving to druid.io
-publishTo := Some("central-local" at "https://metamx.artifactoryonline.com/metamx/libs-releases-local")
-pomIncludeRepository := { _ => false }
+scalacOptions in ThisBuild ++= Seq("-unchecked", "-deprecation")
 
-pomExtra := (
-  <scm>
-    <url>https://github.com/metamx/druid-spark-batch.git</url>
-    <connection>scm:git:git@github.com:metamx/druid-spark-batch.git</connection>
-  </scm>
-    <developers>
-      <developer>
-        <name>Metamarkets Open Source Team</name>
-        <email>oss@metamarkets.com</email>
-        <organization>Metamarkets Group Inc.</organization>
-        <organizationUrl>https://www.metamarkets.com</organizationUrl>
-      </developer>
-    </developers>
-  )
-
-testOptions += Tests.Argument(TestFrameworks.JUnit, "-Duser.timezone=UTC")
-// WTF SBT?
-javaOptions in Test += "-Duser.timezone=UTC"
 fork in Test := true

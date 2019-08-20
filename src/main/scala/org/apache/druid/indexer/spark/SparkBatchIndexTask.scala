@@ -17,69 +17,70 @@
  *  under the License.
  */
 
-package io.druid.indexer.spark
+package org.apache.druid.indexer.spark
 
 import java.io.{Closeable, File, IOException, PrintWriter}
 import java.nio.file.Files
 import java.util
 import java.util.{Objects, Properties}
+
 import com.fasterxml.jackson.annotation.{JsonCreator, JsonProperty}
-import com.google.common.base.Joiner
-import com.google.common.base.{Preconditions, Strings}
+import com.google.common.base.{Joiner, Preconditions, Strings}
 import com.google.common.collect.Iterables
 import com.google.common.io.Closer
-import io.druid.data.input.impl.ParseSpec
-import io.druid.indexing.common.actions.LockListAction
-import io.druid.indexing.common.{TaskStatus, TaskToolbox}
-import io.druid.indexing.common.actions.{LockTryAcquireAction, TaskActionClient}
-import io.druid.indexing.common.task.HadoopTask
-import io.druid.java.util.common.DateTimes
-import io.druid.java.util.common.JodaUtils
-import io.druid.java.util.common.granularity._
-import io.druid.java.util.common.logger.Logger
-import io.druid.query.aggregation.AggregatorFactory
-import io.druid.segment.IndexSpec
-import io.druid.segment.indexing.DataSchema
-import io.druid.timeline.DataSegment
-import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.druid.data.input.impl.ParseSpec
+import org.apache.druid.indexer.TaskStatus
+import org.apache.druid.indexing.common.TaskToolbox
+import org.apache.druid.indexing.common.actions.{LockListAction, LockTryAcquireAction, TaskActionClient}
+import org.apache.druid.indexing.common.task.HadoopTask
+import org.apache.druid.java.util.common.granularity._
+import org.apache.druid.java.util.common.logger.Logger
+import org.apache.druid.java.util.common.{DateTimes, JodaUtils}
+import org.apache.druid.query.aggregation.AggregatorFactory
+import org.apache.druid.segment.IndexSpec
+import org.apache.druid.segment.indexing.DataSchema
+import org.apache.druid.timeline.DataSegment
+import org.apache.spark.SparkConf
+import org.apache.spark.sql.SparkSession
 import org.joda.time.Interval
-import scala.collection.JavaConversions._
+
+import scala.collection.JavaConverters._
 
 @JsonCreator
 class SparkBatchIndexTask(
-  @JsonProperty("id")
-  id: String,
-  @JsonProperty("dataSchema")
-  dataSchema: DataSchema,
-  @JsonProperty("intervals")
-  intervals: util.List[Interval],
-  @JsonProperty("paths")
-  dataFiles: util.List[String],
-  @JsonProperty("targetPartitionSize")
-  targetPartitionSize: Long = SparkBatchIndexTask.DEFAULT_TARGET_PARTITION_SIZE,
-  @JsonProperty("maxRowsInMemory")
-  rowFlushBoundary: Int = SparkBatchIndexTask.DEFAULT_ROW_FLUSH_BOUNDARY,
-  @JsonProperty("properties")
-  properties: Properties = new Properties(),
-  @JsonProperty("master")
-  master: String = "local[1]",
-  @JsonProperty("context")
-  context: util.Map[String, Object] = Map[String, Object](),
-  @JsonProperty("indexSpec")
-  indexSpec: IndexSpec = new IndexSpec(),
-  @JsonProperty("classpathPrefix")
-  classpathPrefix: String = null,
-  @JsonProperty("hadoopDependencyCoordinates")
-  hadoopDependencyCoordinates: util.List[String] = null,
-  @JsonProperty("buildV9Directly")
-  buildV9Directly: Boolean = false
+    @JsonProperty("id")
+    id: String,
+    @JsonProperty("dataSchema")
+    dataSchema: DataSchema,
+    @JsonProperty("intervals")
+    intervals: util.List[Interval],
+    @JsonProperty("paths")
+    dataFiles: util.List[String],
+    @JsonProperty("targetPartitionSize")
+    targetPartitionSize: Long = SparkBatchIndexTask.DEFAULT_TARGET_PARTITION_SIZE,
+    @JsonProperty("maxRowsInMemory")
+    rowFlushBoundary: Int = SparkBatchIndexTask.DEFAULT_ROW_FLUSH_BOUNDARY,
+    @JsonProperty("properties")
+    properties: Properties = new Properties(),
+    @JsonProperty("master")
+    master: String = "local[1]",
+    @JsonProperty("context")
+    context: util.Map[String, AnyRef] = new util.HashMap(),
+    @JsonProperty("indexSpec")
+    indexSpec: IndexSpec = new IndexSpec(),
+    @JsonProperty("classpathPrefix")
+    classpathPrefix: String = null,
+    @JsonProperty("hadoopDependencyCoordinates")
+    hadoopDependencyCoordinates: util.List[String] = null,
+    @JsonProperty("buildV9Directly")
+    buildV9Directly: Boolean = false
 ) extends HadoopTask(
   if (id == null) {
     SparkBatchIndexTask.getOrMakeId(
-        null, SparkBatchIndexTask.TASK_TYPE_BASE, dataSchema.getDataSource,
-        JodaUtils
-          .umbrellaInterval(JodaUtils.condenseIntervals(Preconditions.checkNotNull(intervals, "%s", "intervals")))
-      )
+      null, SparkBatchIndexTask.TASK_TYPE_BASE, dataSchema.getDataSource,
+      JodaUtils
+        .umbrellaInterval(JodaUtils.condenseIntervals(Preconditions.checkNotNull(intervals, "%s", "intervals")))
+    )
   }
   else {
     id
@@ -87,21 +88,20 @@ class SparkBatchIndexTask(
   dataSchema.getDataSource,
   hadoopDependencyCoordinates,
   if (context == null) {
-    Map[String, String]()
+    new util.HashMap[String, AnyRef]()
   }
   else {
     context
   }
-)
-{
-  val log                  : Logger                            = new Logger(classOf[SparkBatchIndexTask])
-  val properties_          : Properties                        =
+) {
+  val log: Logger = new Logger(classOf[SparkBatchIndexTask])
+  val properties_ : Properties =
     if (properties == null) {
       new Properties()
     } else {
       properties
     }
-  val targetPartitionSize_ : Long                              =
+  val targetPartitionSize_ : Long =
     if (targetPartitionSize == 0) {
       SparkBatchIndexTask.DEFAULT_TARGET_PARTITION_SIZE
     } else {
@@ -109,23 +109,23 @@ class SparkBatchIndexTask(
     }
   val aggregatorFactories_ : java.util.List[AggregatorFactory] =
     if (dataSchema.getAggregators == null) {
-      List()
+      List().asJava
     } else {
-      dataSchema.getAggregators.toList
+      dataSchema.getAggregators.toList.asJava
     }
-  val rowFlushBoundary_    : Int                               =
+  val rowFlushBoundary_ : Int =
     if (rowFlushBoundary == 0) {
       SparkBatchIndexTask.DEFAULT_ROW_FLUSH_BOUNDARY
     } else {
       rowFlushBoundary
     }
-  val master_              : String                            =
+  val master_ : String =
     if (master == null) {
       "local[1]"
     } else {
       master
     }
-  val indexSpec_           : IndexSpec                         =
+  val indexSpec_ : IndexSpec =
     if (indexSpec == null) {
       new IndexSpec()
     } else {
@@ -145,21 +145,21 @@ class SparkBatchIndexTask(
     var status: Option[TaskStatus] = Option.empty
 
     try {
-      val outputPath = toolbox.getSegmentPusher.getPathForHadoop(getDataSource)
+      val outputPath = toolbox.getSegmentPusher.getPathForHadoop()
       val classLoader = buildClassLoader(toolbox)
       val task = toolbox.getObjectMapper.writeValueAsString(this)
       log.debug("Sending task `%s`", task)
 
       val result = HadoopTask.invokeForeignLoader[util.ArrayList[String], util.ArrayList[String]](
-        "io.druid.indexer.spark.Runner",
+        "Runner",
         new util.ArrayList(List(
           task,
           Iterables.getOnlyElement(toolbox.getTaskActionClient.submit(new LockListAction())).getVersion,
           outputPath
-        )),
+        ).asJava),
         classLoader
       )
-      toolbox.publishSegments(result.map(toolbox.getObjectMapper.readValue(_, classOf[DataSegment])))
+      toolbox.publishSegments(result.asScala.map(toolbox.getObjectMapper.readValue(_, classOf[DataSegment])).asJava)
       status = Option.apply(TaskStatus.success(getId))
     }
     catch {
@@ -248,17 +248,16 @@ class SparkBatchIndexTask(
     s"$getClasspathPrefix, $getBuildV9Directly)"
 }
 
-object SparkBatchIndexTask
-{
-  private val DEFAULT_ROW_FLUSH_BOUNDARY   : Int    = 75000
-  private val DEFAULT_TARGET_PARTITION_SIZE: Long   = 5000000L
-  private val CHILD_PROPERTY_PREFIX        : String = "druid.indexer.fork.property."
-  val log            = new Logger(SparkBatchIndexTask.getClass)
+object SparkBatchIndexTask {
+  private val DEFAULT_ROW_FLUSH_BOUNDARY: Int = 75000
+  private val DEFAULT_TARGET_PARTITION_SIZE: Long = 5000000L
+  private val CHILD_PROPERTY_PREFIX: String = "druid.indexer.fork.property."
+  val log = new Logger(SparkBatchIndexTask.getClass)
   val TASK_TYPE_BASE = "index_spark"
   private val ID_JOINER = Joiner.on("_")
 
   def mapToSegmentIntervals(originalIntervals: Iterable[Interval], granularity: Granularity): Iterable[Interval] = {
-    originalIntervals.map(x => iterableAsScalaIterable(granularity.getIterable(x))).reduce(_ ++ _)
+    originalIntervals.map(x => granularity.getIterable(x).asScala).reduce(_ ++ _)
   }
 
   // Properties which do not carry over to executors
@@ -267,13 +266,13 @@ object SparkBatchIndexTask
     "druid.extensions.loadList"
   )
 
-  // See io.druid.indexing.overlord.config.ForkingTaskRunnerConfig.allowedPrefixes
+  // See org.apache.druid.indexing.overlord.config.ForkingTaskRunnerConfig.allowedPrefixes
   // We don't include tmp.dir
   // user.timezone and file.encoding are set above
   private[SparkBatchIndexTask] val allowedPrefixes = Seq(
     "com.metamx",
     "druid",
-    "io.druid",
+    "org.apache.druid",
     "hadoop"
   )
 
@@ -296,15 +295,13 @@ object SparkBatchIndexTask
       .set("spark.executor.memory", "7G")
       .set("spark.executor.cores", "1")
       .set("spark.kryo.referenceTracking", "false")
+      .set("spark.kryo.registrator", "org.apache.druid.indexer.spark.SparkDruidRegistrator")
       .set("user.timezone", "UTC")
       .set("file.encoding", "UTF-8")
       .set("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager")
       .set("org.jboss.logging.provider", "slf4j")
       .set("druid.processing.columnCache.sizeBytes", "1000000000")
       .set("druid.extensions.searchCurrentClassloader", "true")
-      // registerKryoClasses already does the below two lines
-      //.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-      //.set("spark.kryo.classesToRegister", SparkBatchIndexTask.KRYO_CLASSES.map(_.getCanonicalName).mkString(","))
       .registerKryoClasses(SparkBatchIndexTask.getKryoClasses())
 
     val propertiesToSet = new Properties()
@@ -317,8 +314,7 @@ object SparkBatchIndexTask
     val closer: Closer = Closer.create()
 
     closer.register(
-      new Closeable
-      {
+      new Closeable {
         @throws[IOException] override def close(): Unit = {
           if (propertiesTempDir.exists() && !propertiesTempDir.delete()) {
             log.info(
@@ -331,8 +327,7 @@ object SparkBatchIndexTask
     )
 
     closer.register(
-      new Closeable
-      {
+      new Closeable {
         @throws[IOException] override def close(): Unit = {
           if (propertiesFile.exists() && !propertiesFile.delete()) {
             log.info(
@@ -344,17 +339,17 @@ object SparkBatchIndexTask
       }
     )
 
-    System.getProperties.stringPropertyNames().filter(
+    System.getProperties.stringPropertyNames().asScala.filter(
       x => {
         allowedPrefixes.exists(x.startsWith)
       }
     ).foreach(
       x => {
-        log.info("Setting io.druid property [%s]", x)
+        log.info("Setting org.apache.druid property [%s]", x)
         propertiesToSet.setProperty(x, System.getProperty(x))
       }
     )
-    System.getProperties.stringPropertyNames().filter(_.startsWith(CHILD_PROPERTY_PREFIX)).foreach(
+    System.getProperties.stringPropertyNames().asScala.filter(_.startsWith(CHILD_PROPERTY_PREFIX)).foreach(
       x => {
         val y = x.substring(CHILD_PROPERTY_PREFIX.length)
         log.info("Setting child property [%s]", y)
@@ -364,17 +359,16 @@ object SparkBatchIndexTask
 
     log.info(
       "Adding task properties: [%s]",
-      task.getProperties.entrySet().map(x => Seq(x.getKey.toString, x.getValue.toString).mkString(":")).mkString(",")
+      task.getProperties.entrySet().asScala.map(x => Seq(x.getKey.toString, x.getValue.toString).mkString(":")).mkString(",")
     )
-    task.getProperties.foreach(x => propertiesToSet.setProperty(x._1, x._2))
+    task.getProperties.asScala.foreach(x => propertiesToSet.setProperty(x._1, x._2))
 
     forbiddenProperties.foreach(propertiesToSet.remove)
 
-    val sc = new SparkContext(conf.setAll(propertiesToSet))
+    val sparkSession: SparkSession = SparkSession.builder.config(conf.setAll(propertiesToSet.asScala)).getOrCreate()
     closer.register(
-      new Closeable
-      {
-        override def close(): Unit = sc.stop()
+      new Closeable {
+        override def close(): Unit = sparkSession.stop()
       }
     )
 
@@ -384,7 +378,7 @@ object SparkBatchIndexTask
       val printWriter = propertyCloser.register(new PrintWriter(propertiesFile))
       // Make a file to propagate to all nodes which contains the properties
       try {
-        propertiesToSet.toSeq.foreach(x => printWriter.println(Seq(x._1, x._2).mkString("=")))
+        propertiesToSet.asScala.toSeq.foreach(x => printWriter.println(Seq(x._1, x._2).mkString("=")))
       }
       catch {
         case t: Throwable => throw propertyCloser.rethrow(t)
@@ -393,25 +387,25 @@ object SparkBatchIndexTask
         propertyCloser.close()
       }
 
-      sc.addJar(propertiesFile.toURI.toString)
+      sparkSession.sparkContext.addJar(propertiesFile.toURI.toString)
 
-      System.getProperties.stringPropertyNames().filter(_.startsWith(CHILD_PROPERTY_PREFIX)).foreach(
+      System.getProperties.stringPropertyNames().asScala.filter(_.startsWith(CHILD_PROPERTY_PREFIX)).foreach(
         x => {
           val y = x.substring(CHILD_PROPERTY_PREFIX.length)
           log.debug("Setting child hadoop property [%s]", y)
-          sc.hadoopConfiguration.set(y, System.getProperty(x), "Druid Forking Property")
+          sparkSession.sparkContext.hadoopConfiguration.set(y, System.getProperty(x), "Druid Forking Property")
         }
       )
 
       // Should be set by HadoopTask for job jars
-      // Hadoop tasks use io.druid.indexer.JobHelper::setupClasspath to replicate their jars.
-      // The jars are put in some universally accessable location and each job addresses them.
+      // Hadoop tasks use org.apache.druid.indexer.JobHelper::setupClasspath to replicate their jars.
+      // The jars are put in some universally accessible location and each job addresses them.
       // Spark has internal mechanisms for shipping its jars around, making an external blob storage (like HDFS or S3)
       // not required for jar distribution.
       // In general they both "make list of jars... distribute via XXX... make that list available on all the workers"
       // but how they accomplish the XXX part is different.
-      // So this **can't** use io.druid.indexer.JobHelper::setupClasspath, and has to have its own way of parsing here.
-      val hadoopTaskJars = System.getProperties.toMap
+      // So this **can't** use org.apache.druid.indexer.JobHelper::setupClasspath, and has to have its own way of parsing here.
+      val hadoopTaskJars = System.getProperties.asScala.toMap
         .getOrElse(
           "druid.hadoop.internal.classpath",
           throw new IllegalStateException("missing druid.hadoop.internal.classpath from HadoopTask")
@@ -419,7 +413,7 @@ object SparkBatchIndexTask
       hadoopTaskJars.split(File.pathSeparator).filter(_.endsWith(".jar")).foreach(
         x => {
           log.info(s"Adding jar [$x]")
-          sc.addJar(x)
+          sparkSession.sparkContext.addJar(x)
         }
       )
 
@@ -428,19 +422,19 @@ object SparkBatchIndexTask
       log.debug("Using version [%s]", version)
 
       val dataSegments = SparkDruidIndexer.loadData(
-        task.getDataFiles,
+        task.getDataFiles.asScala,
         new SerializedJson[DataSchema](task.getDataSchema),
         SparkBatchIndexTask
-          .mapToSegmentIntervals(task.getIntervals, task.getDataSchema.getGranularitySpec.getSegmentGranularity),
+          .mapToSegmentIntervals(task.getIntervals.asScala, task.getDataSchema.getGranularitySpec.getSegmentGranularity),
         task.getTargetPartitionSize,
         task.getRowFlushBoundary,
         outputPath,
         task.getIndexSpec,
         task.getBuildV9Directly,
-        sc
+        sparkSession
       ).map(_.withVersion(version))
       log.info("Found segments `%s`", util.Arrays.deepToString(dataSegments.toArray))
-      new util.ArrayList(dataSegments.map(SerializedJsonStatic.mapper.writeValueAsString))
+      new util.ArrayList(dataSegments.map(SerializedJsonStatic.mapper.writeValueAsString).asJava)
     }
     catch {
       case t: Throwable => throw closer.rethrow(t)
@@ -451,10 +445,10 @@ object SparkBatchIndexTask
   }
 
   private[SparkBatchIndexTask] def getOrMakeId(
-    id: String,
-    typeName: String,
-    dataSource: String,
-    interval: Interval
+      id: String,
+      typeName: String,
+      dataSource: String,
+      interval: Interval
   ): String = {
     if (id != null) return id
     val objects = new util.ArrayList[AnyRef]
