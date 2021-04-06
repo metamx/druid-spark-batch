@@ -123,7 +123,11 @@ object SparkDruidIndexer {
       s => {
         val p = new Path(s)
         val fs = p.getFileSystem(sc.hadoopConfiguration)
-        fs.getFileStatus(p).getLen
+        // You can send 3,500 PUT/COPY/POST/DELETE or 5,500 GET/HEAD requests per second per prefix in an S3 bucket
+        // This block catches "503 Slow Down" error, retries a request and sleeps for up to 6 (=2+4) seconds in total
+        retryWithExponentialBackoff(3) {
+          fs.getFileStatus(p).getLen
+        }
       }
     ).sum
     val startingPartitions = (totalGZSize / (100L << 20)).toInt + 1
