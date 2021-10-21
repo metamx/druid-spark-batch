@@ -1,14 +1,20 @@
 language: scala
+after_success:
+  - bash <(curl -s https://codecov.io/bash)
 
 scala:
    - 2.10.6
    - 2.11.12
 
 script:
-   - sbt ++$TRAVIS_SCALA_VERSION test
+   - sbt clean coverage test  coverageReport
 
 sudo: false
 
 cache:
   directories:
       - $HOME/.m2
+
+
+
+
