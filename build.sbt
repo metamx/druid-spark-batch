@@ -24,7 +24,7 @@ homepage := Some(url("https://github.com/metamx/druid-spark-batch"))
 crossScalaVersions := Seq("2.11.12", "2.10.6")
 releaseIgnoreUntrackedFiles := true
 
-val druid_version = "0.12.1-rc3-SNAPSHOT"
+val druid_version = "0.12.3"
 // This is just used here for Path, so anything that doesn't break spark should be fine
 val hadoop_version = "2.7.3"
 val spark_version = "2.1.0"
@@ -120,9 +120,9 @@ assemblyMergeStrategy in assembly := {
     xs map {
       _.toLowerCase
     } match {
-      case ("manifest.mf" :: Nil) | ("index.list" :: Nil) | ("dependencies" :: Nil) =>
+      case  "manifest.mf" :: Nil | "index.list" :: Nil |  "dependencies" :: Nil =>
         MergeStrategy.discard
-      case ps@(x :: xs) if ps.last.endsWith(".sf") || ps.last.endsWith(".dsa") =>
+      case ps@ x :: xs if ps.last.endsWith(".sf") || ps.last.endsWith(".dsa") =>
         MergeStrategy.discard
       case "services" :: xs =>
         MergeStrategy.filterDistinctLines
@@ -142,11 +142,11 @@ resolvers += "JitPack.IO" at "https://jitpack.io"
 
 publishMavenStyle := true
 
-//TODO: remove this before moving to druid.io
-publishTo := Some("central-local" at "https://metamx.artifactoryonline.com/metamx/libs-releases-local")
-pomIncludeRepository := { _ => false }
+////: remove this before moving to druid.io
+//publishTo := Some("central-local" at "https://metamx.artifactoryonline.com/metamx/libs-releases-local")
+//pomIncludeRepository := { _ => false }
 
-pomExtra := (
+pomExtra :=
   <scm>
     <url>https://github.com/metamx/druid-spark-batch.git</url>
     <connection>scm:git:git@github.com:metamx/druid-spark-batch.git</connection>
@@ -159,9 +159,9 @@ pomExtra := (
         <organizationUrl>https://www.metamarkets.com</organizationUrl>
       </developer>
     </developers>
-  )
+
 
 testOptions += Tests.Argument(TestFrameworks.JUnit, "-Duser.timezone=UTC")
 // WTF SBT?
 javaOptions in Test += "-Duser.timezone=UTC"
-fork in Test := true
+fork in Test := false
