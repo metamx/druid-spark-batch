@@ -18,5 +18,5 @@ jobs:
       with:
         java-version: '11'
         distribution: 'adopt'
-    - name: Run tests
-      run: sbt test
+    - name: Run Package
+      run: sbt clean package
